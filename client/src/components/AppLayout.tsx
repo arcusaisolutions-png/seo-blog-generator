@@ -63,10 +63,6 @@ export default function AppLayout({ user, children }: AppLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
-  const logoutMutation = trpc.auth.logout.useMutation({
-    onSuccess: () => { window.location.href = "/"; },
-    onError: () => toast.error("Logout failed"),
-  });
 
   const initials = (user.name ?? user.email ?? "U").slice(0, 2).toUpperCase();
 
@@ -134,11 +130,6 @@ export default function AppLayout({ user, children }: AppLayoutProps) {
             <DropdownMenuItem onClick={() => toggleTheme?.()}>
               {theme === "dark" ? <Sun className="w-4 h-4 mr-2" /> : <Moon className="w-4 h-4 mr-2" />}
               {theme === "dark" ? "Light Mode" : "Dark Mode"}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => logoutMutation.mutate()} className="text-destructive">
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign Out
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

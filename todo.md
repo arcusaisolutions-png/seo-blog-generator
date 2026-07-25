@@ -96,3 +96,11 @@
 - [x] Empty states for all pages
 - [x] Loading states and error handling
 - [x] Mobile responsive layout
+
+
+## Phase 14: Remove Authentication Requirement
+- [x] Remove auth check from App.tsx routing
+- [x] Create a mock user context for unauthenticated access
+- [x] Update all tRPC procedures to work without user context (changed protectedProcedure to publicProcedure)
+- [x] Remove login/logout UI from AppLayout (removed logout button)
+- [x] Test all features work without authentication (app loads and renders without sign-in)

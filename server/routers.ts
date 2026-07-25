@@ -2,7 +2,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { publicProcedure, router } from "./_core/trpc";
 import {
   analyzeWritingSamples,
   generateContentBrief,
@@ -54,7 +54,7 @@ export const appRouter = router({
   system: systemRouter,
 
   auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
+    me: publicProcedure.query((opts) => opts.ctx.user || { id: 1 }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -64,25 +64,25 @@ export const appRouter = router({
 
   // ─── Workspaces ─────────────────────────────────────────────────────────────
   workspace: router({
-    list: protectedProcedure.query(({ ctx }) => getUserWorkspaces(ctx.user.id)),
-    getDefault: protectedProcedure.query(({ ctx }) => getOrCreateDefaultWorkspace(ctx.user.id)),
+    list: publicProcedure.query(({ ctx }) => getUserWorkspaces(ctx.user?.id || 1)),
+    getDefault: publicProcedure.query(({ ctx }) => getOrCreateDefaultWorkspace(ctx.user?.id || 1)),
   }),
 
   // ─── Voice Profiles ──────────────────────────────────────────────────────────
   voice: router({
-    list: protectedProcedure
+    list: publicProcedure
       .input(z.object({ search: z.string().optional() }).optional())
-      .query(({ ctx, input }) => getUserVoiceProfiles(ctx.user.id, input?.search)),
+      .query(({ ctx, input }) => getUserVoiceProfiles(ctx.user?.id || 1, input?.search)),
 
-    get: protectedProcedure
+    get: publicProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ ctx, input }) => getVoiceProfileById(input.id, ctx.user.id)),
+      .query(({ ctx, input }) => getVoiceProfileById(input.id, ctx.user?.id || 1)),
 
-    getSources: protectedProcedure
+    getSources: publicProcedure
       .input(z.object({ voiceProfileId: z.number() }))
       .query(({ ctx, input }) => getVoiceSourceFiles(input.voiceProfileId)),
 
-    create: protectedProcedure
+    create: publicProcedure
       .input(z.object({
         name: z.string(),
         description: z.string().optional(),
@@ -90,21 +90,21 @@ export const appRouter = router({
         tags: z.array(z.string()).optional(),
       }))
       .mutation(({ ctx, input }) =>
-        createVoiceProfile({ userId: ctx.user.id, ...input, tags: input.tags ?? null })
+        createVoiceProfile({ userId: ctx.user?.id || 1, ...input, tags: input.tags ?? null })
       ),
 
-    analyze: protectedProcedure
+    analyze: publicProcedure
       .input(z.object({
         samples: z.array(z.string()),
         voiceProfileId: z.number().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         const result = await analyzeWritingSamples(input.samples);
-        await logUsage({ userId: ctx.user.id, action: "voice_analyze", resourceType: "voice_profile" });
+        await logUsage({ userId: ctx.user?.id || 1, action: "voice_analyze", resourceType: "voice_profile" });
         return result;
       }),
 
-    saveAnalysis: protectedProcedure
+    saveAnalysis: publicProcedure
       .input(z.object({
         voiceProfileId: z.number(),
         analysis: z.object({
@@ -136,7 +136,7 @@ export const appRouter = router({
       }))
       .mutation(async ({ ctx, input }) => {
         const { analysis, voiceProfileId, sourceSamples } = input;
-        const updated = await updateVoiceProfile(voiceProfileId, ctx.user.id, {
+        const updated = await updateVoiceProfile(voiceProfileId, ctx.user?.id || 1, {
           name: analysis.voiceName,
           summaryDescription: analysis.summaryDescription,
           analysisData: analysis.analysisData,
@@ -164,7 +164,7 @@ export const appRouter = router({
           for (const sample of sourceSamples) {
             await createVoiceSourceFile({
               voiceProfileId,
-              userId: ctx.user.id,
+              userId: ctx.user?.id || 1,
               content: sample.content,
               fileName: sample.fileName,
               fileType: sample.fileType,
@@ -175,7 +175,7 @@ export const appRouter = router({
         return updated;
       }),
 
-    update: protectedProcedure
+    update: publicProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -198,40 +198,40 @@ export const appRouter = router({
       }))
       .mutation(({ ctx, input }) => {
         const { id, ...data } = input;
-        return updateVoiceProfile(id, ctx.user.id, data as any);
+        return updateVoiceProfile(id, ctx.user?.id || 1, data as any);
       }),
 
-    delete: protectedProcedure
+    delete: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(({ ctx, input }) => deleteVoiceProfile(input.id, ctx.user.id)),
+      .mutation(({ ctx, input }) => deleteVoiceProfile(input.id, ctx.user?.id || 1)),
 
-    duplicate: protectedProcedure
+    duplicate: publicProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const original = await getVoiceProfileById(input.id, ctx.user.id);
+        const original = await getVoiceProfileById(input.id, ctx.user?.id || 1);
         if (!original) throw new Error("Voice profile not found");
         const { id, createdAt, updatedAt, ...rest } = original;
-        return createVoiceProfile({ ...rest, name: `${original.name} (Copy)`, userId: ctx.user.id });
+        return createVoiceProfile({ ...rest, name: `${original.name} (Copy)`, userId: ctx.user?.id || 1 });
       }),
   }),
 
   // ─── Blog Drafts ─────────────────────────────────────────────────────────────
   blog: router({
-    list: protectedProcedure
+    list: publicProcedure
       .input(z.object({ search: z.string().optional(), status: z.string().optional() }).optional())
-      .query(({ ctx, input }) => getUserBlogDrafts(ctx.user.id, input?.search, input?.status)),
+      .query(({ ctx, input }) => getUserBlogDrafts(ctx.user?.id || 1, input?.search, input?.status)),
 
-    get: protectedProcedure
+    get: publicProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ ctx, input }) => getBlogDraftById(input.id, ctx.user.id)),
+      .query(({ ctx, input }) => getBlogDraftById(input.id, ctx.user?.id || 1)),
 
-    create: protectedProcedure
+    create: publicProcedure
       .input(z.object({ title: z.string(), topic: z.string().optional() }))
       .mutation(({ ctx, input }) =>
-        createBlogDraft({ userId: ctx.user.id, title: input.title, topic: input.topic })
+        createBlogDraft({ userId: ctx.user?.id || 1, title: input.title, topic: input.topic })
       ),
 
-    update: protectedProcedure
+    update: publicProcedure
       .input(z.object({
         id: z.number(),
         title: z.string().optional(),
@@ -285,20 +285,20 @@ export const appRouter = router({
       }))
       .mutation(({ ctx, input }) => {
         const { id, ...data } = input;
-        return updateBlogDraft(id, ctx.user.id, data as any);
+        return updateBlogDraft(id, ctx.user?.id || 1, data as any);
       }),
 
-    delete: protectedProcedure
+    delete: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(({ ctx, input }) => deleteBlogDraft(input.id, ctx.user.id)),
+      .mutation(({ ctx, input }) => deleteBlogDraft(input.id, ctx.user?.id || 1)),
 
     // Multi-stage generation
-    generateBrief: protectedProcedure
+    generateBrief: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user.id);
+        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
         if (!draft) throw new Error("Draft not found");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user.id) : null;
+        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
         const brief = await generateContentBrief({
           title: draft.title,
           topic: draft.topic ?? "",
@@ -339,18 +339,18 @@ export const appRouter = router({
           sliderTechnical: draft.sliderTechnical ?? 50,
           voice,
         });
-        await updateBlogDraft(input.draftId, ctx.user.id, { contentBrief: brief, status: "brief" });
-        await logUsage({ userId: ctx.user.id, action: "generate_brief", resourceType: "blog_draft", resourceId: input.draftId });
+        await updateBlogDraft(input.draftId, ctx.user?.id || 1, { contentBrief: brief, status: "brief" });
+        await logUsage({ userId: ctx.user?.id || 1, action: "generate_brief", resourceType: "blog_draft", resourceId: input.draftId });
         return { brief };
       }),
 
-    generateOutline: protectedProcedure
+    generateOutline: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user.id);
+        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
         if (!draft) throw new Error("Draft not found");
         if (!draft.contentBrief) throw new Error("Generate brief first");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user.id) : null;
+        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
         const genInput = {
           title: draft.title, topic: draft.topic ?? "", primaryKeyword: draft.primaryKeyword ?? "",
           secondaryKeywords: (draft.secondaryKeywords as string[]) ?? [], searchIntent: draft.searchIntent ?? "",
@@ -372,18 +372,18 @@ export const appRouter = router({
           voice,
         };
         const outline = await generateOutline(genInput, draft.contentBrief);
-        await updateBlogDraft(input.draftId, ctx.user.id, { contentOutline: outline, status: "outline" });
-        await logUsage({ userId: ctx.user.id, action: "generate_outline", resourceType: "blog_draft", resourceId: input.draftId });
+        await updateBlogDraft(input.draftId, ctx.user?.id || 1, { contentOutline: outline, status: "outline" });
+        await logUsage({ userId: ctx.user?.id || 1, action: "generate_outline", resourceType: "blog_draft", resourceId: input.draftId });
         return { outline };
       }),
 
-    generateDraft: protectedProcedure
+    generateDraft: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user.id);
+        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
         if (!draft) throw new Error("Draft not found");
         if (!draft.contentOutline) throw new Error("Generate outline first");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user.id) : null;
+        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
         const genInput = {
           title: draft.title, topic: draft.topic ?? "", primaryKeyword: draft.primaryKeyword ?? "",
           secondaryKeywords: (draft.secondaryKeywords as string[]) ?? [], searchIntent: draft.searchIntent ?? "",
@@ -406,28 +406,28 @@ export const appRouter = router({
         };
         const draftContent = await generateDraft(genInput, draft.contentOutline);
         const wordCount = draftContent.split(/\s+/).length;
-        await updateBlogDraft(input.draftId, ctx.user.id, { contentDraft: draftContent, status: "draft", wordCount });
-        await logUsage({ userId: ctx.user.id, action: "generate_draft", resourceType: "blog_draft", resourceId: input.draftId, wordsGenerated: wordCount });
+        await updateBlogDraft(input.draftId, ctx.user?.id || 1, { contentDraft: draftContent, status: "draft", wordCount });
+        await logUsage({ userId: ctx.user?.id || 1, action: "generate_draft", resourceType: "blog_draft", resourceId: input.draftId, wordsGenerated: wordCount });
         return { draft: draftContent, wordCount };
       }),
 
-    generateSeo: protectedProcedure
+    generateSeo: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user.id);
+        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
         if (!draft) throw new Error("Draft not found");
         const content = draft.contentFinal ?? draft.contentDraft ?? "";
         if (!content) throw new Error("Generate draft first");
         const seo = await generateSeoEnhancement(content, {
           title: draft.title, primaryKeyword: draft.primaryKeyword ?? "",
         } as any);
-        await updateBlogDraft(input.draftId, ctx.user.id, {
+        await updateBlogDraft(input.draftId, ctx.user?.id || 1, {
           metaTitle: seo.metaTitle, metaDescription: seo.metaDescription, slugSuggestion: seo.slug, status: "final",
         });
         return seo;
       }),
 
-    rewriteSection: protectedProcedure
+    rewriteSection: publicProcedure
       .input(z.object({
         draftId: z.number(),
         sectionContent: z.string(),
@@ -435,30 +435,30 @@ export const appRouter = router({
         context: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user.id);
+        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
         if (!draft) throw new Error("Draft not found");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user.id) : null;
+        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
         const result = await rewriteSection(input.sectionContent, input.action, voice, input.context);
         return { content: result };
       }),
 
-    logExport: protectedProcedure
+    logExport: publicProcedure
       .input(z.object({ draftId: z.number(), format: z.string() }))
       .mutation(async ({ ctx, input }) => {
-        await logExport({ userId: ctx.user.id, blogDraftId: input.draftId, exportFormat: input.format });
+        await logExport({ userId: ctx.user?.id || 1, blogDraftId: input.draftId, exportFormat: input.format });
         return { success: true };
       }),
   }),
 
   // ─── Repurpose Sessions ──────────────────────────────────────────────────────
   repurpose: router({
-    list: protectedProcedure.query(({ ctx }) => getUserRepurposeSessions(ctx.user.id)),
+    list: publicProcedure.query(({ ctx }) => getUserRepurposeSessions(ctx.user?.id || 1)),
 
-    get: protectedProcedure
+    get: publicProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ ctx, input }) => getRepurposeSessionById(input.id, ctx.user.id)),
+      .query(({ ctx, input }) => getRepurposeSessionById(input.id, ctx.user?.id || 1)),
 
-    create: protectedProcedure
+    create: publicProcedure
       .input(z.object({
         title: z.string().optional(),
         sourceContent: z.string().optional(),
@@ -468,15 +468,15 @@ export const appRouter = router({
         transformationInstructions: z.string().optional(),
         voiceProfileId: z.number().optional(),
       }))
-      .mutation(({ ctx, input }) => createRepurposeSession({ userId: ctx.user.id, ...input })),
+      .mutation(({ ctx, input }) => createRepurposeSession({ userId: ctx.user?.id || 1, ...input })),
 
-    generatePlan: protectedProcedure
+    generatePlan: publicProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const session = await getRepurposeSessionById(input.sessionId, ctx.user.id);
+        const session = await getRepurposeSessionById(input.sessionId, ctx.user?.id || 1);
         if (!session) throw new Error("Session not found");
-        const voice = session.voiceProfileId ? await getVoiceProfileById(session.voiceProfileId, ctx.user.id) : null;
-        await updateRepurposeSession(input.sessionId, ctx.user.id, { status: "planning" });
+        const voice = session.voiceProfileId ? await getVoiceProfileById(session.voiceProfileId, ctx.user?.id || 1) : null;
+        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { status: "planning" });
         const plan = await generateTransformationPlan(
           session.sourceContent ?? "",
           session.targetTopic ?? "",
@@ -484,18 +484,18 @@ export const appRouter = router({
           session.transformationInstructions ?? "",
           voice
         );
-        await updateRepurposeSession(input.sessionId, ctx.user.id, { transformationPlan: plan, status: "planning" });
+        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { transformationPlan: plan, status: "planning" });
         return { plan };
       }),
 
-    generateContent: protectedProcedure
+    generateContent: publicProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const session = await getRepurposeSessionById(input.sessionId, ctx.user.id);
+        const session = await getRepurposeSessionById(input.sessionId, ctx.user?.id || 1);
         if (!session) throw new Error("Session not found");
         if (!session.transformationPlan) throw new Error("Generate plan first");
-        const voice = session.voiceProfileId ? await getVoiceProfileById(session.voiceProfileId, ctx.user.id) : null;
-        await updateRepurposeSession(input.sessionId, ctx.user.id, { status: "generating" });
+        const voice = session.voiceProfileId ? await getVoiceProfileById(session.voiceProfileId, ctx.user?.id || 1) : null;
+        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { status: "generating" });
         const output = await generateRepurposedContent(
           session.sourceContent ?? "",
           session.targetTopic ?? "",
@@ -505,12 +505,12 @@ export const appRouter = router({
           voice
         );
         const wordCount = output.split(/\s+/).length;
-        await updateRepurposeSession(input.sessionId, ctx.user.id, { outputContent: output, status: "complete" });
-        await logUsage({ userId: ctx.user.id, action: "repurpose_content", resourceType: "repurpose_session", resourceId: input.sessionId, wordsGenerated: wordCount });
+        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { outputContent: output, status: "complete" });
+        await logUsage({ userId: ctx.user?.id || 1, action: "repurpose_content", resourceType: "repurpose_session", resourceId: input.sessionId, wordsGenerated: wordCount });
         return { content: output, wordCount };
       }),
 
-    update: protectedProcedure
+    update: publicProcedure
       .input(z.object({
         id: z.number(),
         title: z.string().optional(),
@@ -523,15 +523,15 @@ export const appRouter = router({
       }))
       .mutation(({ ctx, input }) => {
         const { id, ...data } = input;
-        return updateRepurposeSession(id, ctx.user.id, data as any);
+        return updateRepurposeSession(id, ctx.user?.id || 1, data as any);
       }),
   }),
 
   // ─── Image Studio ────────────────────────────────────────────────────────────
   image: router({
-    list: protectedProcedure.query(({ ctx }) => getUserGeneratedImages(ctx.user.id)),
+    list: publicProcedure.query(({ ctx }) => getUserGeneratedImages(ctx.user?.id || 1)),
 
-    generatePrompts: protectedProcedure
+    generatePrompts: publicProcedure
       .input(z.object({
         blogTitle: z.string(),
         topic: z.string(),
@@ -542,7 +542,7 @@ export const appRouter = router({
         generateImagePrompts(input.blogTitle, input.topic, input.audience ?? "", input.style)
       ),
 
-    save: protectedProcedure
+    save: publicProcedure
       .input(z.object({
         prompt: z.string(),
         imageUrl: z.string().optional(),
@@ -552,25 +552,25 @@ export const appRouter = router({
         blogDraftId: z.number().optional(),
       }))
       .mutation(({ ctx, input }) =>
-        createGeneratedImage({ userId: ctx.user.id, ...input, prompt: input.prompt })
+        createGeneratedImage({ userId: ctx.user?.id || 1, ...input, prompt: input.prompt })
       ),
 
-    delete: protectedProcedure
+    delete: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(({ ctx, input }) => deleteGeneratedImage(input.id, ctx.user.id as number)),
+      .mutation(({ ctx, input }) => deleteGeneratedImage(input.id, ctx.user?.id || 1 as number)),
   }),
 
   // ─── Templates ───────────────────────────────────────────────────────────────
   template: router({
-    list: protectedProcedure
+    list: publicProcedure
       .input(z.object({ search: z.string().optional(), type: z.string().optional() }).optional())
-      .query(({ ctx, input }) => getUserTemplates(ctx.user.id, input?.search, input?.type)),
+      .query(({ ctx, input }) => getUserTemplates(ctx.user?.id || 1, input?.search, input?.type)),
 
-    get: protectedProcedure
+    get: publicProcedure
       .input(z.object({ id: z.number() }))
-      .query(({ ctx, input }) => getTemplateById(input.id, ctx.user.id)),
+      .query(({ ctx, input }) => getTemplateById(input.id, ctx.user?.id || 1)),
 
-    create: protectedProcedure
+    create: publicProcedure
       .input(z.object({
         name: z.string(),
         description: z.string().optional(),
@@ -580,9 +580,9 @@ export const appRouter = router({
         voiceProfileId: z.number().optional(),
         blogLayout: z.string().optional(),
       }))
-      .mutation(({ ctx, input }) => createTemplate({ userId: ctx.user.id, ...input, config: input.config ?? null })),
+      .mutation(({ ctx, input }) => createTemplate({ userId: ctx.user?.id || 1, ...input, config: input.config ?? null })),
 
-    update: protectedProcedure
+    update: publicProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().optional(),
@@ -591,18 +591,18 @@ export const appRouter = router({
       }))
       .mutation(({ ctx, input }) => {
         const { id, ...data } = input;
-        return updateTemplate(id, ctx.user.id, data as any);
+        return updateTemplate(id, ctx.user?.id || 1, data as any);
       }),
 
-    delete: protectedProcedure
+    delete: publicProcedure
       .input(z.object({ id: z.number() }))
-      .mutation(({ ctx, input }) => deleteTemplate(input.id, ctx.user.id as number)),
+      .mutation(({ ctx, input }) => deleteTemplate(input.id, ctx.user?.id || 1 as number)),
   }),
 
   // ─── Settings ────────────────────────────────────────────────────────────────
   settings: router({
-    get: protectedProcedure.query(({ ctx }) => getUserSettings(ctx.user.id)),
-    update: protectedProcedure
+    get: publicProcedure.query(({ ctx }) => getUserSettings(ctx.user?.id || 1)),
+    update: publicProcedure
       .input(z.object({
         defaultVoiceProfileId: z.number().nullable().optional(),
         defaultCtaStyle: z.string().optional(),
@@ -621,37 +621,37 @@ export const appRouter = router({
         onboardingCompleted: z.boolean().optional(),
         onboardingSteps: z.record(z.string(), z.boolean()).optional(),
       }))
-      .mutation(({ ctx, input }) => upsertUserSettings(ctx.user.id, input as any)),
+      .mutation(({ ctx, input }) => upsertUserSettings(ctx.user?.id || 1, input as any)),
   }),
 
   // ─── Usage & History ─────────────────────────────────────────────────────────
   usage: router({
-    stats: protectedProcedure.query(({ ctx }) => getUserUsageStats(ctx.user.id)),
-    logs: protectedProcedure
+    stats: publicProcedure.query(({ ctx }) => getUserUsageStats(ctx.user?.id || 1)),
+    logs: publicProcedure
       .input(z.object({ limit: z.number().optional() }).optional())
-      .query(({ ctx, input }) => getUserUsageLogs(ctx.user.id, input?.limit)),
-    exportHistory: protectedProcedure.query(({ ctx }) => getUserExportHistory(ctx.user.id)),
+      .query(({ ctx, input }) => getUserUsageLogs(ctx.user?.id || 1, input?.limit)),
+    exportHistory: publicProcedure.query(({ ctx }) => getUserExportHistory(ctx.user?.id || 1)),
   }),
 
   // ─── Seed Demo Data ──────────────────────────────────────────────────────────
   seed: router({
-    runDemo: protectedProcedure.mutation(async ({ ctx }) => {
+    runDemo: publicProcedure.mutation(async ({ ctx }) => {
       const { seedDemoDataForUser } = await import("./seed");
-      await seedDemoDataForUser(ctx.user.id);
+      await seedDemoDataForUser(ctx.user?.id || 1);
       return { success: true };
     }),
-    resetAndReseed: protectedProcedure.mutation(async ({ ctx }) => {
+    resetAndReseed: publicProcedure.mutation(async ({ ctx }) => {
       // Force reseed by deleting existing demo data first
       const db = await (await import("./db")).getDb();
       if (db) {
         const { voiceProfiles, blogDrafts, templates } = await import("../drizzle/schema");
         const { eq, and } = await import("drizzle-orm");
-        await db.delete(voiceProfiles).where(and(eq(voiceProfiles.userId, ctx.user.id), eq(voiceProfiles.isDemo, true)));
-        await db.delete(blogDrafts).where(and(eq(blogDrafts.userId, ctx.user.id), eq(blogDrafts.isDemo, true)));
-        await db.delete(templates).where(and(eq(templates.userId, ctx.user.id), eq(templates.isDemo, true)));
+        await db.delete(voiceProfiles).where(and(eq(voiceProfiles.userId, ctx.user?.id || 1), eq(voiceProfiles.isDemo, true)));
+        await db.delete(blogDrafts).where(and(eq(blogDrafts.userId, ctx.user?.id || 1), eq(blogDrafts.isDemo, true)));
+        await db.delete(templates).where(and(eq(templates.userId, ctx.user?.id || 1), eq(templates.isDemo, true)));
       }
       const { seedDemoDataForUser } = await import("./seed");
-      await seedDemoDataForUser(ctx.user.id);
+      await seedDemoDataForUser(ctx.user?.id || 1);
       return { success: true };
     }),
   }),

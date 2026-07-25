@@ -32,12 +32,21 @@ function AuthenticatedApp() {
     );
   }
 
-  if (!user) {
-    return <LandingPage />;
-  }
+  // Use mock user for public access (no authentication required)
+  const mockUser = user || {
+    id: 1,
+    openId: "public-user",
+    name: "Guest User",
+    email: "guest@seobloggenerator.local",
+    role: "user" as const,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    lastSignedIn: new Date(),
+    loginMethod: "public",
+  };
 
   return (
-    <AppLayout user={user}>
+    <AppLayout user={mockUser}>
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/new-blog" component={NewBlog} />
