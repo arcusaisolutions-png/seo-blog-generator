@@ -19,7 +19,12 @@ export type FileContent = {
   type: "file_url";
   file_url: {
     url: string;
-    mime_type?: "audio/mpeg" | "audio/wav" | "application/pdf" | "audio/mp4" | "video/mp4" ;
+    mime_type?:
+      | "audio/mpeg"
+      | "audio/wav"
+      | "application/pdf"
+      | "audio/mp4"
+      | "video/mp4";
   };
 };
 
@@ -99,6 +104,41 @@ export type InvokeResult = {
     total_tokens: number;
   };
 };
+
+/**
+ * The Forge API can return a successful HTTP response that contains an error
+ * payload (or an empty completion list). Validate it before feature code tries
+ * to access `choices[0]`, so callers get a useful error instead of a runtime
+ * TypeError.
+ */
+export function ensureInvokeResult(payload: unknown): InvokeResult {
+  if (!payload || typeof payload !== "object") {
+    throw new Error(
+      "The AI service returned an invalid response. Please try again."
+    );
+  }
+
+  const response = payload as {
+    choices?: unknown;
+    error?: { message?: unknown };
+    message?: unknown;
+  };
+
+  if (!Array.isArray(response.choices) || response.choices.length === 0) {
+    const providerMessage =
+      typeof response.error?.message === "string"
+        ? response.error.message
+        : typeof response.message === "string"
+          ? response.message
+          : "";
+    const detail = providerMessage ? ` ${providerMessage}` : "";
+    throw new Error(
+      `The AI service did not return a completion. Please try again.${detail}`
+    );
+  }
+
+  return payload as InvokeResult;
+}
 
 export type JsonSchema = {
   name: string;
@@ -312,9 +352,7 @@ const fetchWithBackoff = async (
         return response;
       }
 
-      const retryAfterMs = parseRetryAfter(
-        response.headers.get("retry-after")
-      );
+      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
       try {
         await response.body?.cancel();
       } catch {
@@ -417,7 +455,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     );
   }
 
-  return (await response.json()) as InvokeResult;
+  return ensureInvokeResult(await response.json());
 }
 
 export type ModelInfo = {
@@ -435,9 +473,10 @@ export type ModelsResponse = {
 export async function listLLMModels(): Promise<ModelsResponse> {
   assertApiKey();
 
-  const url = ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/models`
-    : "https://forge.manus.im/v1/models";
+  const url =
+    ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
+      ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/models`
+      : "https://forge.manus.im/v1/models";
 
   const response = await fetchWithBackoff(url, {
     headers: { authorization: `Bearer ${ENV.forgeApiKey}` },

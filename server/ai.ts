@@ -1,15 +1,39 @@
 import { invokeLLM } from "./_core/llm";
 import { VoiceProfile } from "../drizzle/schema";
-import { type VoiceConditioningPayload, voiceConditioningToPrompt } from "./voiceConditioning";
+import {
+  type VoiceConditioningPayload,
+  voiceConditioningToPrompt,
+} from "./voiceConditioning";
 
 function extractContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
-    return content
-      .map((c: any) => (c?.type === "text" ? c.text : ""))
-      .join("");
+    return content.map((c: any) => (c?.type === "text" ? c.text : "")).join("");
   }
   return "";
+}
+
+/**
+ * Protect every generation feature against empty or non-text completions.
+ * The provider has already been validated in invokeLLM, but this gives each
+ * feature a human-readable error if a completion contains no usable text.
+ */
+export function requireLLMContent(
+  response: unknown,
+  operation: string
+): string {
+  const content = (
+    response as { choices?: Array<{ message?: { content?: unknown } }> } | null
+  )?.choices?.[0]?.message?.content;
+  const text = extractContent(content).trim();
+
+  if (!text) {
+    throw new Error(
+      `${operation} did not return usable content. Please try again.`
+    );
+  }
+
+  return text;
 }
 
 // ─── Voice Analysis ───────────────────────────────────────────────────────────
@@ -17,7 +41,16 @@ export type VoiceAnalysisResult = {
   voiceName: string;
   summaryDescription: string;
   analysisData: Record<string, unknown>;
-  dna: { formality: number; opinionated: number; elaborate: number; bold: number; storytelling: number; humor: number; persuasion: number; technical: number };
+  dna: {
+    formality: number;
+    opinionated: number;
+    elaborate: number;
+    bold: number;
+    storytelling: number;
+    humor: number;
+    persuasion: number;
+    technical: number;
+  };
   doRules: string[];
   dontRules: string[];
   signaturePhrases: string[];
@@ -62,14 +95,24 @@ export type VoiceAnalysisResult = {
 
 function numberInRange(value: unknown, fallback = 50): number {
   const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
+  return Number.isFinite(parsed)
+    ? Math.max(0, Math.min(100, Math.round(parsed)))
+    : fallback;
 }
 
 function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
-export async function analyzeWritingSamples(samples: string[]): Promise<VoiceAnalysisResult> {
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+export async function analyzeWritingSamples(
+  samples: string[]
+): Promise<VoiceAnalysisResult> {
   const combinedText = samples.join("\n\n---\n\n");
   const wordCount = combinedText.split(/\s+/).length;
 
@@ -174,12 +217,14 @@ Return this exact JSON structure:
     response_format: { type: "json_object" } as any,
   });
 
-  const content = extractContent(res.choices[0].message.content) ?? "{}";
+  const content = requireLLMContent(res, "Voice analysis");
   let parsed: Record<string, any>;
   try {
     parsed = JSON.parse(content) as Record<string, any>;
   } catch {
-    throw new Error("Voice analysis returned an invalid response. Please try again.");
+    throw new Error(
+      "Voice analysis returned an invalid response. Please try again."
+    );
   }
 
   // Confidence based on word count
@@ -190,10 +235,14 @@ Return this exact JSON structure:
     summaryDescription: parsed.summaryDescription ?? "",
     analysisData: parsed.analysisData ?? {},
     dna: {
-      formality: numberInRange(parsed.dna?.formality), opinionated: numberInRange(parsed.dna?.opinionated),
-      elaborate: numberInRange(parsed.dna?.elaborate), bold: numberInRange(parsed.dna?.bold),
-      storytelling: numberInRange(parsed.dna?.storytelling), humor: numberInRange(parsed.dna?.humor),
-      persuasion: numberInRange(parsed.dna?.persuasion), technical: numberInRange(parsed.dna?.technical),
+      formality: numberInRange(parsed.dna?.formality),
+      opinionated: numberInRange(parsed.dna?.opinionated),
+      elaborate: numberInRange(parsed.dna?.elaborate),
+      bold: numberInRange(parsed.dna?.bold),
+      storytelling: numberInRange(parsed.dna?.storytelling),
+      humor: numberInRange(parsed.dna?.humor),
+      persuasion: numberInRange(parsed.dna?.persuasion),
+      technical: numberInRange(parsed.dna?.technical),
     },
     doRules: stringArray(parsed.doRules),
     dontRules: stringArray(parsed.dontRules),
@@ -210,20 +259,40 @@ Return this exact JSON structure:
     toneProfile: {
       formalToCasual: numberInRange(parsed.toneProfile?.formalToCasual),
       reservedToBold: numberInRange(parsed.toneProfile?.reservedToBold),
-      neutralToOpinionated: numberInRange(parsed.toneProfile?.neutralToOpinionated),
+      neutralToOpinionated: numberInRange(
+        parsed.toneProfile?.neutralToOpinionated
+      ),
       dryToPlayful: numberInRange(parsed.toneProfile?.dryToPlayful),
-      softToAuthoritative: numberInRange(parsed.toneProfile?.softToAuthoritative),
+      softToAuthoritative: numberInRange(
+        parsed.toneProfile?.softToAuthoritative
+      ),
       conciseToElaborate: numberInRange(parsed.toneProfile?.conciseToElaborate),
     },
     styleProfile: {
-      avgSentenceLength: numberInRange(parsed.styleProfile?.avgSentenceLength, 18),
-      avgParagraphLength: numberInRange(parsed.styleProfile?.avgParagraphLength, 3),
-      rhetoricalQuestionFrequency: numberInRange(parsed.styleProfile?.rhetoricalQuestionFrequency),
+      avgSentenceLength: numberInRange(
+        parsed.styleProfile?.avgSentenceLength,
+        18
+      ),
+      avgParagraphLength: numberInRange(
+        parsed.styleProfile?.avgParagraphLength,
+        3
+      ),
+      rhetoricalQuestionFrequency: numberInRange(
+        parsed.styleProfile?.rhetoricalQuestionFrequency
+      ),
       storytellingLevel: numberInRange(parsed.styleProfile?.storytellingLevel),
       metaphorLevel: numberInRange(parsed.styleProfile?.metaphorLevel),
-      readabilityLevel: typeof parsed.styleProfile?.readabilityLevel === "string" ? parsed.styleProfile.readabilityLevel : "General",
-      vocabularyComplexity: typeof parsed.styleProfile?.vocabularyComplexity === "string" ? parsed.styleProfile.vocabularyComplexity : "Balanced",
-      formattingPreference: stringArray(parsed.styleProfile?.formattingPreference),
+      readabilityLevel:
+        typeof parsed.styleProfile?.readabilityLevel === "string"
+          ? parsed.styleProfile.readabilityLevel
+          : "General",
+      vocabularyComplexity:
+        typeof parsed.styleProfile?.vocabularyComplexity === "string"
+          ? parsed.styleProfile.vocabularyComplexity
+          : "Balanced",
+      formattingPreference: stringArray(
+        parsed.styleProfile?.formattingPreference
+      ),
     },
     personalityProfile: {
       warmth: numberInRange(parsed.personalityProfile?.warmth),
@@ -233,13 +302,20 @@ Return this exact JSON structure:
       empathy: numberInRange(parsed.personalityProfile?.empathy),
       directness: numberInRange(parsed.personalityProfile?.directness),
     },
-    angleSummary: typeof parsed.angleSummary === "string" ? parsed.angleSummary : "",
-    analysisSummary: typeof parsed.analysisSummary === "string" ? parsed.analysisSummary : (parsed.summaryDescription ?? ""),
+    angleSummary:
+      typeof parsed.angleSummary === "string" ? parsed.angleSummary : "",
+    analysisSummary:
+      typeof parsed.analysisSummary === "string"
+        ? parsed.analysisSummary
+        : (parsed.summaryDescription ?? ""),
   };
 }
 
 // ─── Voice Conditioning Prompt ────────────────────────────────────────────────
-function buildVoicePrompt(voice: VoiceProfile | null, conditioning?: VoiceConditioningPayload | null): string {
+function buildVoicePrompt(
+  voice: VoiceProfile | null,
+  conditioning?: VoiceConditioningPayload | null
+): string {
   if (conditioning) return voiceConditioningToPrompt(conditioning);
   if (!voice) return "";
   const doRules = (voice.doRules as string[] | null) ?? [];
@@ -308,14 +384,24 @@ const WORD_COUNT_MAP: Record<string, number> = {
   comprehensive: 3500,
 };
 
-export async function generateContentBrief(input: BlogGenerationInput): Promise<string> {
-  const targetWords = input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
-  const voiceSection = buildVoicePrompt(input.voice ?? null, input.voiceConditioning);
+export async function generateContentBrief(
+  input: BlogGenerationInput
+): Promise<string> {
+  const targetWords =
+    input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
+  const voiceSection = buildVoicePrompt(
+    input.voice ?? null,
+    input.voiceConditioning
+  );
 
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: "You are an expert SEO content strategist. Generate a structured content brief." },
+      {
+        role: "system",
+        content:
+          "You are an expert SEO content strategist. Generate a structured content brief.",
+      },
       {
         role: "user",
         content: `Create a detailed SEO content brief for:
@@ -341,12 +427,19 @@ Include: target audience analysis, search intent breakdown, key angles to cover,
       },
     ],
   });
-  return extractContent(res.choices[0].message.content);
+  return requireLLMContent(res, "Content brief generation");
 }
 
-export async function generateOutline(input: BlogGenerationInput, brief: string): Promise<string> {
-  const targetWords = input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
-  const voiceSection = buildVoicePrompt(input.voice ?? null, input.voiceConditioning);
+export async function generateOutline(
+  input: BlogGenerationInput,
+  brief: string
+): Promise<string> {
+  const targetWords =
+    input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
+  const voiceSection = buildVoicePrompt(
+    input.voice ?? null,
+    input.voiceConditioning
+  );
   const structure = [
     input.includeIntro && "Introduction",
     input.includeTldr && "TL;DR Summary",
@@ -356,12 +449,18 @@ export async function generateOutline(input: BlogGenerationInput, brief: string)
     input.includeConclusion && "Conclusion",
     input.includeCtaSection && "Call to Action",
     input.includeSchemaFaq && "Schema-Ready FAQ Block",
-  ].filter(Boolean).join(", ");
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: "You are an expert SEO content architect. Create detailed blog outlines." },
+      {
+        role: "system",
+        content:
+          "You are an expert SEO content architect. Create detailed blog outlines.",
+      },
       {
         role: "user",
         content: `Based on this content brief, create a detailed blog outline:
@@ -382,12 +481,19 @@ Format as a structured outline with H1, H2, H3 headings and brief notes for each
       },
     ],
   });
-  return extractContent(res.choices[0].message.content);
+  return requireLLMContent(res, "Outline generation");
 }
 
-export async function generateDraft(input: BlogGenerationInput, outline: string): Promise<string> {
-  const targetWords = input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
-  const voiceSection = buildVoicePrompt(input.voice ?? null, input.voiceConditioning);
+export async function generateDraft(
+  input: BlogGenerationInput,
+  outline: string
+): Promise<string> {
+  const targetWords =
+    input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
+  const voiceSection = buildVoicePrompt(
+    input.voice ?? null,
+    input.voiceConditioning
+  );
 
   const humanizationInstructions = `
 Writing style calibration (0=low, 100=high):
@@ -434,10 +540,13 @@ Format with proper markdown: # H1, ## H2, ### H3, **bold**, *italic*, bullet lis
       },
     ],
   });
-  return extractContent(res.choices[0].message.content);
+  return requireLLMContent(res, "Draft generation");
 }
 
-export async function generateSeoEnhancement(draft: string, input: BlogGenerationInput): Promise<{
+export async function generateSeoEnhancement(
+  draft: string,
+  input: BlogGenerationInput
+): Promise<{
   metaTitle: string;
   metaDescription: string;
   slug: string;
@@ -447,7 +556,11 @@ export async function generateSeoEnhancement(draft: string, input: BlogGeneratio
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: "You are an SEO expert. Analyze content and provide SEO metadata. Return JSON only." },
+      {
+        role: "system",
+        content:
+          "You are an SEO expert. Analyze content and provide SEO metadata. Return JSON only.",
+      },
       {
         role: "user",
         content: `Analyze this blog post and return SEO metadata as JSON:
@@ -470,14 +583,24 @@ Return:
     ],
     response_format: { type: "json_object" } as any,
   });
-  const content = extractContent(res.choices[0].message.content) ?? "{}";
-  const parsed = JSON.parse(content);
+  const content = requireLLMContent(res, "SEO enhancement");
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      "SEO enhancement returned invalid structured data. Please try again."
+    );
+  }
   return {
-    metaTitle: parsed.metaTitle ?? input.title,
-    metaDescription: parsed.metaDescription ?? "",
-    slug: parsed.slug ?? input.primaryKeyword.toLowerCase().replace(/\s+/g, "-"),
-    seoScore: parsed.seoScore ?? 70,
-    suggestions: parsed.suggestions ?? [],
+    metaTitle: stringValue(parsed.metaTitle, input.title),
+    metaDescription: stringValue(parsed.metaDescription),
+    slug: stringValue(
+      parsed.slug,
+      input.primaryKeyword.toLowerCase().replace(/\s+/g, "-")
+    ),
+    seoScore: numberInRange(parsed.seoScore, 70),
+    suggestions: stringArray(parsed.suggestions),
   };
 }
 
@@ -494,7 +617,11 @@ export async function generateTransformationPlan(
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: "You are an expert content strategist specializing in content repurposing." },
+      {
+        role: "system",
+        content:
+          "You are an expert content strategist specializing in content repurposing.",
+      },
       {
         role: "user",
         content: `Analyze this source content and create a transformation plan:
@@ -515,7 +642,7 @@ Provide:
       },
     ],
   });
-  return extractContent(res.choices[0].message.content);
+  return requireLLMContent(res, "Repurpose plan generation");
 }
 
 export async function generateRepurposedContent(
@@ -531,7 +658,11 @@ export async function generateRepurposedContent(
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: "You are an expert content writer specializing in repurposing content into high-quality SEO articles." },
+      {
+        role: "system",
+        content:
+          "You are an expert content writer specializing in repurposing content into high-quality SEO articles.",
+      },
       {
         role: "user",
         content: `Transform this content following the plan:
@@ -550,7 +681,7 @@ Write the complete transformed ${targetFormat} with proper markdown formatting.`
       },
     ],
   });
-  return extractContent(res.choices[0].message.content);
+  return requireLLMContent(res, "Repurposed content generation");
 }
 
 // ─── Image Prompt Generation ──────────────────────────────────────────────────
@@ -563,7 +694,11 @@ export async function generateImagePrompts(
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: "You are a creative director specializing in blog imagery. Return JSON only." },
+      {
+        role: "system",
+        content:
+          "You are a creative director specializing in blog imagery. Return JSON only.",
+      },
       {
         role: "user",
         content: `Generate image prompts for a blog post:
@@ -582,30 +717,52 @@ Return JSON:
     ],
     response_format: { type: "json_object" } as any,
   });
-  const content = extractContent(res.choices[0].message.content) ?? "{}";
-  const parsed = JSON.parse(content);
+  const content = requireLLMContent(res, "Image prompt generation");
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      "Image prompt generation returned invalid structured data. Please try again."
+    );
+  }
   return {
-    featured: parsed.featured ?? `Professional ${style} image for ${blogTitle}`,
-    sections: parsed.sections ?? [],
-    altText: parsed.altText ?? blogTitle,
+    featured: stringValue(
+      parsed.featured,
+      `Professional ${style} image for ${blogTitle}`
+    ),
+    sections: stringArray(parsed.sections),
+    altText: stringValue(parsed.altText, blogTitle),
   };
 }
 
 // ─── Section Actions ──────────────────────────────────────────────────────────
 export async function rewriteSection(
   sectionContent: string,
-  action: "expand" | "shorten" | "strengthen" | "add_examples" | "add_faq" | "add_cta" | "add_local_seo",
+  action:
+    | "expand"
+    | "shorten"
+    | "strengthen"
+    | "add_examples"
+    | "add_faq"
+    | "add_cta"
+    | "add_local_seo",
   voice: VoiceProfile | null,
   context?: string,
   voiceConditioning?: VoiceConditioningPayload | null
 ): Promise<string> {
   const voiceSection = buildVoicePrompt(voice, voiceConditioning);
   const actionInstructions: Record<string, string> = {
-    expand: "Expand this section with more detail, examples, and depth. Aim for 50% more content.",
-    shorten: "Shorten this section to its most essential points. Aim for 50% less content.",
-    strengthen: "Rewrite this section with stronger voice, more authority, and more compelling language.",
-    add_examples: "Add 2-3 concrete, specific examples to illustrate the points in this section.",
-    add_faq: "Add a relevant FAQ block at the end of this section with 3-4 questions and answers.",
+    expand:
+      "Expand this section with more detail, examples, and depth. Aim for 50% more content.",
+    shorten:
+      "Shorten this section to its most essential points. Aim for 50% less content.",
+    strengthen:
+      "Rewrite this section with stronger voice, more authority, and more compelling language.",
+    add_examples:
+      "Add 2-3 concrete, specific examples to illustrate the points in this section.",
+    add_faq:
+      "Add a relevant FAQ block at the end of this section with 3-4 questions and answers.",
     add_cta: "Add a compelling call-to-action at the end of this section.",
     add_local_seo: `Add local SEO elements to this section${context ? ` targeting ${context}` : ""}.`,
   };
@@ -613,7 +770,11 @@ export async function rewriteSection(
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
-      { role: "system", content: "You are an expert content editor. Improve the provided section as instructed." },
+      {
+        role: "system",
+        content:
+          "You are an expert content editor. Improve the provided section as instructed.",
+      },
       {
         role: "user",
         content: `${actionInstructions[action]}
@@ -626,5 +787,5 @@ Return only the improved section content in markdown format.`,
       },
     ],
   });
-  return extractContent(res.choices[0].message.content) || sectionContent;
+  return requireLLMContent(res, "Section rewrite") || sectionContent;
 }
