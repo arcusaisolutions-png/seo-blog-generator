@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { BLOG_LAYOUT_GUIDANCE, getBlogLayoutGuidance } from "./ai";
 
 describe("SEO Blog Generator - Core Logic", () => {
   it("should calculate word count correctly", () => {
@@ -32,18 +33,30 @@ describe("SEO Blog Generator - Core Logic", () => {
   it("should validate blog generation input requirements", () => {
     const validateInput = (title: string, primaryKeyword: string) => {
       if (!title.trim()) return { valid: false, error: "Title required" };
-      if (!primaryKeyword.trim()) return { valid: false, error: "Primary keyword required" };
+      if (!primaryKeyword.trim())
+        return { valid: false, error: "Primary keyword required" };
       return { valid: true };
     };
-    expect(validateInput("", "seo")).toEqual({ valid: false, error: "Title required" });
-    expect(validateInput("My Blog", "")).toEqual({ valid: false, error: "Primary keyword required" });
+    expect(validateInput("", "seo")).toEqual({
+      valid: false,
+      error: "Title required",
+    });
+    expect(validateInput("My Blog", "")).toEqual({
+      valid: false,
+      error: "Primary keyword required",
+    });
     expect(validateInput("My Blog", "seo tips")).toEqual({ valid: true });
   });
 
   it("should generate slug from keyword", () => {
     const toSlug = (keyword: string) =>
-      keyword.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    expect(toSlug("content marketing strategy")).toBe("content-marketing-strategy");
+      keyword
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
+    expect(toSlug("content marketing strategy")).toBe(
+      "content-marketing-strategy"
+    );
     expect(toSlug("B2B SEO Tips")).toBe("b2b-seo-tips");
   });
 
@@ -58,13 +71,30 @@ describe("SEO Blog Generator - Core Logic", () => {
 
   it("should support all blog layout types", () => {
     const BLOG_LAYOUTS = [
-      "standard", "thought-leadership", "how-to", "listicle",
-      "case-study", "comparison", "faq-driven", "local-seo", "pillar", "news-commentary",
+      "standard",
+      "thought-leadership",
+      "how-to",
+      "listicle",
+      "case-study",
+      "comparison",
+      "faq-driven",
+      "local-seo",
+      "pillar",
+      "news-commentary",
     ];
     expect(BLOG_LAYOUTS).toHaveLength(10);
     expect(BLOG_LAYOUTS).toContain("standard");
     expect(BLOG_LAYOUTS).toContain("pillar");
     expect(BLOG_LAYOUTS).toContain("local-seo");
+  });
+
+  it("gives every selectable layout a structural writing instruction", () => {
+    expect(Object.keys(BLOG_LAYOUT_GUIDANCE)).toHaveLength(11);
+    expect(getBlogLayoutGuidance("how-to")).toContain("step-by-step");
+    expect(getBlogLayoutGuidance("local-seo")).toContain("local");
+    expect(getBlogLayoutGuidance("unknown-layout")).toBe(
+      BLOG_LAYOUT_GUIDANCE.standard
+    );
   });
 
   it("should support all voice types", () => {
@@ -76,8 +106,14 @@ describe("SEO Blog Generator - Core Logic", () => {
 
   it("should support all repurpose target formats", () => {
     const TARGET_FORMATS = [
-      "Blog Post", "Long-form Article", "Listicle", "FAQ Post",
-      "Thought Leadership", "Local SEO Post", "Rewrite", "Case Study",
+      "Blog Post",
+      "Long-form Article",
+      "Listicle",
+      "FAQ Post",
+      "Thought Leadership",
+      "Local SEO Post",
+      "Rewrite",
+      "Case Study",
     ];
     expect(TARGET_FORMATS).toHaveLength(8);
     expect(TARGET_FORMATS).toContain("Blog Post");

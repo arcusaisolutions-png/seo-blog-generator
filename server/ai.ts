@@ -110,6 +110,40 @@ function stringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
+/**
+ * Layout choices must make a visible difference to the generated article, not
+ * merely be stored alongside it. These concise instructions are applied to the
+ * brief, outline, and draft stages.
+ */
+export const BLOG_LAYOUT_GUIDANCE: Record<string, string> = {
+  standard:
+    "Use a clear problem-to-solution article with descriptive H2 sections, practical examples, and a concise conclusion.",
+  "thought-leadership":
+    "Lead with a defensible point of view, challenge a common assumption, use evidence and original insight, then close with a decisive next step.",
+  "how-to":
+    "Use an outcome-led introduction and a numbered, step-by-step sequence. Give each step an actionable heading, instructions, and a practical example.",
+  listicle:
+    "Frame the article as a scannable numbered list. Make every item independently useful and finish with a synthesis or prioritization section.",
+  "case-study":
+    "Use a situation, challenge, approach, execution, evidence, and lessons structure. Be specific about before-and-after outcomes without inventing facts.",
+  comparison:
+    "Define evaluation criteria first, compare options fairly in dedicated sections or a table-ready list, then give a conditional recommendation.",
+  "faq-driven":
+    "Organize the body around the questions searchers ask. Answer each question directly first, then add concise supporting context and a schema-ready FAQ section.",
+  "local-seo":
+    "Establish local relevance early, address location-specific needs and service considerations, add trust signals, and place the local CTA naturally near the end.",
+  pillar:
+    "Create a comprehensive hub with logical H2 and H3 hierarchy, broad foundational coverage, deeper subsections, and clear opportunities for internal links.",
+  "story-led":
+    "Open with a relevant narrative or scene, weave lessons through the story, then translate the narrative into useful, actionable guidance.",
+  "news-commentary":
+    "Start with the timely development, distinguish facts from interpretation, explain the implications for the reader, and give a measured forward-looking take.",
+};
+
+export function getBlogLayoutGuidance(layout: string): string {
+  return BLOG_LAYOUT_GUIDANCE[layout] ?? BLOG_LAYOUT_GUIDANCE.standard;
+}
+
 export async function analyzeWritingSamples(
   samples: string[]
 ): Promise<VoiceAnalysisResult> {
@@ -343,6 +377,7 @@ export interface BlogGenerationInput {
   geoTarget: string;
   brandName: string;
   ctaGoal: string;
+  internalNotes: string;
   tone: string;
   complexityLevel: string;
   readingLevel: string;
@@ -393,6 +428,7 @@ export async function generateContentBrief(
     input.voice ?? null,
     input.voiceConditioning
   );
+  const layoutGuidance = getBlogLayoutGuidance(input.blogLayout);
 
   const res = await invokeLLM({
     model: "gpt-5-mini",
@@ -415,10 +451,12 @@ Funnel Stage: ${input.funnelStage}
 Geography: ${input.geoTarget}
 Brand: ${input.brandName}
 CTA Goal: ${input.ctaGoal}
+Blog Angle / Writer Notes: ${input.internalNotes || "Not specified"}
 Tone: ${input.tone}
 Complexity: ${input.complexityLevel}
 Reading Level: ${input.readingLevel}
 Layout: ${input.blogLayout}
+Layout Guidance: ${layoutGuidance}
 Target Word Count: ~${targetWords} words
 SEO Research Depth: ${input.deepSeoOptimization ? "deep (cover entities, gaps, and supporting questions)" : "standard"}
 ${voiceSection ? `\n${voiceSection}` : ""}
@@ -440,6 +478,7 @@ export async function generateOutline(
     input.voice ?? null,
     input.voiceConditioning
   );
+  const layoutGuidance = getBlogLayoutGuidance(input.blogLayout);
   const structure = [
     input.includeIntro && "Introduction",
     input.includeTldr && "TL;DR Summary",
@@ -470,6 +509,7 @@ ${brief}
 
 Requirements:
 - Layout style: ${input.blogLayout}
+- Layout guidance: ${layoutGuidance}
 - Target word count: ~${targetWords} words
 - Heading depth: ${input.headingDepth}
 - Required sections: ${structure}
@@ -494,6 +534,7 @@ export async function generateDraft(
     input.voice ?? null,
     input.voiceConditioning
   );
+  const layoutGuidance = getBlogLayoutGuidance(input.blogLayout);
 
   const humanizationInstructions = `
 Writing style calibration (0=low, 100=high):
@@ -527,6 +568,8 @@ Requirements:
 - Point of view: ${input.pointOfView}
 - Tone: ${input.tone}
 - Reading level: ${input.readingLevel}
+- Article layout: ${input.blogLayout}. ${layoutGuidance}
+- Writer notes / desired angle: ${input.internalNotes || "Use the strongest useful angle supported by the brief."}
 ${input.deepSeoOptimization && input.useSemanticEntities ? "- Include semantic entities and LSI keywords naturally" : ""}
 ${input.deepSeoOptimization && input.useNlpTerms ? "- Use NLP-friendly terms and natural language patterns" : ""}
 ${input.geoTarget ? `- Local SEO target: ${input.geoTarget}` : ""}
@@ -567,6 +610,8 @@ export async function generateSeoEnhancement(
 
 Primary keyword: ${input.primaryKeyword}
 SEO depth: ${input.deepSeoOptimization ? "deep: include topical coverage and practical optimization suggestions" : "standard"}
+Requested meta title: ${input.metaTitle || "No manual title supplied; generate the best title"}
+Requested meta description: ${input.metaDescription || "No manual description supplied; generate the best description"}
 
 CONTENT:
 ${draft.slice(0, 4000)}
@@ -593,8 +638,10 @@ Return:
     );
   }
   return {
-    metaTitle: stringValue(parsed.metaTitle, input.title),
-    metaDescription: stringValue(parsed.metaDescription),
+    metaTitle:
+      input.metaTitle?.trim() || stringValue(parsed.metaTitle, input.title),
+    metaDescription:
+      input.metaDescription?.trim() || stringValue(parsed.metaDescription),
     slug: stringValue(
       parsed.slug,
       input.primaryKeyword.toLowerCase().replace(/\s+/g, "-")

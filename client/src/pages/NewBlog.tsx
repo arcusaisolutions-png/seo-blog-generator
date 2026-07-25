@@ -587,7 +587,7 @@ export default function NewBlog() {
                     onChange={event => setAudience(event.target.value)}
                   />
                 </Field>
-                <Field label="Notes" hint="(optional)">
+                <Field label="Blog angle & notes" hint="(optional)">
                   <Textarea
                     className={inputClass}
                     rows={2}
