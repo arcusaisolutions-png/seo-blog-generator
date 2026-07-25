@@ -20,6 +20,21 @@ export async function createContext(
     user = null;
   }
 
+  // For public access, provide a default user with ID 1
+  if (!user) {
+    user = {
+      id: 1,
+      openId: "public-user",
+      name: "Guest User",
+      email: "guest@seobloggenerator.local",
+      loginMethod: "public",
+      role: "user",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastSignedIn: new Date(),
+    } as User;
+  }
+
   return {
     req: opts.req,
     res: opts.res,
