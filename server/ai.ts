@@ -1,5 +1,6 @@
 import { invokeLLM } from "./_core/llm";
 import { VoiceProfile } from "../drizzle/schema";
+import { type VoiceConditioningPayload, voiceConditioningToPrompt } from "./voiceConditioning";
 
 function extractContent(content: unknown): string {
   if (typeof content === "string") return content;
@@ -12,7 +13,7 @@ function extractContent(content: unknown): string {
 }
 
 // ─── Voice Analysis ───────────────────────────────────────────────────────────
-export async function analyzeWritingSamples(samples: string[]): Promise<{
+export type VoiceAnalysisResult = {
   voiceName: string;
   summaryDescription: string;
   analysisData: Record<string, unknown>;
@@ -23,12 +24,52 @@ export async function analyzeWritingSamples(samples: string[]): Promise<{
   sentencePatternExamples: string[];
   preferredOpenings: string[];
   preferredTransitions: string[];
+  preferredClosings: string[];
   preferredCtaStyles: string[];
   vocabularyPreferences: string[];
   forbiddenPhrases: string[];
   sampleExcerpts: string[];
   confidenceScore: number;
-}> {
+  toneProfile: {
+    formalToCasual: number;
+    reservedToBold: number;
+    neutralToOpinionated: number;
+    dryToPlayful: number;
+    softToAuthoritative: number;
+    conciseToElaborate: number;
+  };
+  styleProfile: {
+    avgSentenceLength: number;
+    avgParagraphLength: number;
+    rhetoricalQuestionFrequency: number;
+    storytellingLevel: number;
+    metaphorLevel: number;
+    readabilityLevel: string;
+    vocabularyComplexity: string;
+    formattingPreference: string[];
+  };
+  personalityProfile: {
+    warmth: number;
+    confidence: number;
+    intensity: number;
+    wit: number;
+    empathy: number;
+    directness: number;
+  };
+  angleSummary: string;
+  analysisSummary: string;
+};
+
+function numberInRange(value: unknown, fallback = 50): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+export async function analyzeWritingSamples(samples: string[]): Promise<VoiceAnalysisResult> {
   const combinedText = samples.join("\n\n---\n\n");
   const wordCount = combinedText.split(/\s+/).length;
 
@@ -49,7 +90,7 @@ Return this exact JSON structure:
 {
   "voiceName": "A creative, descriptive name for this voice (e.g., 'The Confident Strategist', 'The Warm Educator')",
   "summaryDescription": "2-3 sentence description of this voice's personality and style",
-  "analysisData": {
+    "analysisData": {
     "tone": "description",
     "formality": "description",
     "personalityTraits": ["trait1", "trait2"],
@@ -78,6 +119,34 @@ Return this exact JSON structure:
     "formattingTendencies": "description",
     "punctuationHabits": "description"
   },
+  "toneProfile": {
+    "formalToCasual": 0-100 (0 formal, 100 casual),
+    "reservedToBold": 0-100,
+    "neutralToOpinionated": 0-100,
+    "dryToPlayful": 0-100,
+    "softToAuthoritative": 0-100,
+    "conciseToElaborate": 0-100
+  },
+  "styleProfile": {
+    "avgSentenceLength": number,
+    "avgParagraphLength": number,
+    "rhetoricalQuestionFrequency": 0-100,
+    "storytellingLevel": 0-100,
+    "metaphorLevel": 0-100,
+    "readabilityLevel": "string",
+    "vocabularyComplexity": "string",
+    "formattingPreference": ["string"]
+  },
+  "personalityProfile": {
+    "warmth": 0-100,
+    "confidence": 0-100,
+    "intensity": 0-100,
+    "wit": 0-100,
+    "empathy": 0-100,
+    "directness": 0-100
+  },
+  "angleSummary": "the content angle and audience relationship in 1-2 sentences",
+  "analysisSummary": "a compact, prompt-ready summary of the full voice fingerprint",
   "dna": {
     "formality": 0-100,
     "opinionated": 0-100,
@@ -94,6 +163,7 @@ Return this exact JSON structure:
   "sentencePatternExamples": ["example1", "example2"],
   "preferredOpenings": ["opening style 1", "opening style 2"],
   "preferredTransitions": ["transition1", "transition2", "transition3"],
+  "preferredClosings": ["closing style 1", "closing style 2"],
   "preferredCtaStyles": ["cta style 1", "cta style 2"],
   "vocabularyPreferences": ["word/phrase 1", "word/phrase 2", "word/phrase 3"],
   "forbiddenPhrases": ["phrase1", "phrase2"],
@@ -105,7 +175,12 @@ Return this exact JSON structure:
   });
 
   const content = extractContent(res.choices[0].message.content) ?? "{}";
-  const parsed = JSON.parse(content);
+  let parsed: Record<string, any>;
+  try {
+    parsed = JSON.parse(content) as Record<string, any>;
+  } catch {
+    throw new Error("Voice analysis returned an invalid response. Please try again.");
+  }
 
   // Confidence based on word count
   const confidence = Math.min(100, Math.round((wordCount / 500) * 100));
@@ -114,23 +189,58 @@ Return this exact JSON structure:
     voiceName: parsed.voiceName ?? "Custom Voice",
     summaryDescription: parsed.summaryDescription ?? "",
     analysisData: parsed.analysisData ?? {},
-    dna: parsed.dna ?? { formality: 50, opinionated: 50, elaborate: 50, bold: 50, storytelling: 50, humor: 50, persuasion: 50, technical: 50 },
-    doRules: parsed.doRules ?? [],
-    dontRules: parsed.dontRules ?? [],
-    signaturePhrases: parsed.signaturePhrases ?? [],
-    sentencePatternExamples: parsed.sentencePatternExamples ?? [],
-    preferredOpenings: parsed.preferredOpenings ?? [],
-    preferredTransitions: parsed.preferredTransitions ?? [],
-    preferredCtaStyles: parsed.preferredCtaStyles ?? [],
-    vocabularyPreferences: parsed.vocabularyPreferences ?? [],
-    forbiddenPhrases: parsed.forbiddenPhrases ?? [],
-    sampleExcerpts: parsed.sampleExcerpts ?? [],
+    dna: {
+      formality: numberInRange(parsed.dna?.formality), opinionated: numberInRange(parsed.dna?.opinionated),
+      elaborate: numberInRange(parsed.dna?.elaborate), bold: numberInRange(parsed.dna?.bold),
+      storytelling: numberInRange(parsed.dna?.storytelling), humor: numberInRange(parsed.dna?.humor),
+      persuasion: numberInRange(parsed.dna?.persuasion), technical: numberInRange(parsed.dna?.technical),
+    },
+    doRules: stringArray(parsed.doRules),
+    dontRules: stringArray(parsed.dontRules),
+    signaturePhrases: stringArray(parsed.signaturePhrases),
+    sentencePatternExamples: stringArray(parsed.sentencePatternExamples),
+    preferredOpenings: stringArray(parsed.preferredOpenings),
+    preferredTransitions: stringArray(parsed.preferredTransitions),
+    preferredClosings: stringArray(parsed.preferredClosings),
+    preferredCtaStyles: stringArray(parsed.preferredCtaStyles),
+    vocabularyPreferences: stringArray(parsed.vocabularyPreferences),
+    forbiddenPhrases: stringArray(parsed.forbiddenPhrases),
+    sampleExcerpts: stringArray(parsed.sampleExcerpts),
     confidenceScore: confidence,
+    toneProfile: {
+      formalToCasual: numberInRange(parsed.toneProfile?.formalToCasual),
+      reservedToBold: numberInRange(parsed.toneProfile?.reservedToBold),
+      neutralToOpinionated: numberInRange(parsed.toneProfile?.neutralToOpinionated),
+      dryToPlayful: numberInRange(parsed.toneProfile?.dryToPlayful),
+      softToAuthoritative: numberInRange(parsed.toneProfile?.softToAuthoritative),
+      conciseToElaborate: numberInRange(parsed.toneProfile?.conciseToElaborate),
+    },
+    styleProfile: {
+      avgSentenceLength: numberInRange(parsed.styleProfile?.avgSentenceLength, 18),
+      avgParagraphLength: numberInRange(parsed.styleProfile?.avgParagraphLength, 3),
+      rhetoricalQuestionFrequency: numberInRange(parsed.styleProfile?.rhetoricalQuestionFrequency),
+      storytellingLevel: numberInRange(parsed.styleProfile?.storytellingLevel),
+      metaphorLevel: numberInRange(parsed.styleProfile?.metaphorLevel),
+      readabilityLevel: typeof parsed.styleProfile?.readabilityLevel === "string" ? parsed.styleProfile.readabilityLevel : "General",
+      vocabularyComplexity: typeof parsed.styleProfile?.vocabularyComplexity === "string" ? parsed.styleProfile.vocabularyComplexity : "Balanced",
+      formattingPreference: stringArray(parsed.styleProfile?.formattingPreference),
+    },
+    personalityProfile: {
+      warmth: numberInRange(parsed.personalityProfile?.warmth),
+      confidence: numberInRange(parsed.personalityProfile?.confidence),
+      intensity: numberInRange(parsed.personalityProfile?.intensity),
+      wit: numberInRange(parsed.personalityProfile?.wit),
+      empathy: numberInRange(parsed.personalityProfile?.empathy),
+      directness: numberInRange(parsed.personalityProfile?.directness),
+    },
+    angleSummary: typeof parsed.angleSummary === "string" ? parsed.angleSummary : "",
+    analysisSummary: typeof parsed.analysisSummary === "string" ? parsed.analysisSummary : (parsed.summaryDescription ?? ""),
   };
 }
 
 // ─── Voice Conditioning Prompt ────────────────────────────────────────────────
-function buildVoicePrompt(voice: VoiceProfile | null): string {
+function buildVoicePrompt(voice: VoiceProfile | null, conditioning?: VoiceConditioningPayload | null): string {
+  if (conditioning) return voiceConditioningToPrompt(conditioning);
   if (!voice) return "";
   const doRules = (voice.doRules as string[] | null) ?? [];
   const dontRules = (voice.dontRules as string[] | null) ?? [];
@@ -178,6 +288,7 @@ export interface BlogGenerationInput {
   keywordDensityTarget: number;
   useSemanticEntities: boolean;
   useNlpTerms: boolean;
+  deepSeoOptimization: boolean;
   sliderFormality: number;
   sliderOpinionated: number;
   sliderElaborate: number;
@@ -187,6 +298,7 @@ export interface BlogGenerationInput {
   sliderPersuasion: number;
   sliderTechnical: number;
   voice?: VoiceProfile | null;
+  voiceConditioning?: VoiceConditioningPayload | null;
 }
 
 const WORD_COUNT_MAP: Record<string, number> = {
@@ -198,7 +310,7 @@ const WORD_COUNT_MAP: Record<string, number> = {
 
 export async function generateContentBrief(input: BlogGenerationInput): Promise<string> {
   const targetWords = input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
-  const voiceSection = buildVoicePrompt(input.voice ?? null);
+  const voiceSection = buildVoicePrompt(input.voice ?? null, input.voiceConditioning);
 
   const res = await invokeLLM({
     model: "gpt-5-mini",
@@ -222,9 +334,10 @@ Complexity: ${input.complexityLevel}
 Reading Level: ${input.readingLevel}
 Layout: ${input.blogLayout}
 Target Word Count: ~${targetWords} words
+SEO Research Depth: ${input.deepSeoOptimization ? "deep (cover entities, gaps, and supporting questions)" : "standard"}
 ${voiceSection ? `\n${voiceSection}` : ""}
 
-Include: target audience analysis, search intent breakdown, key angles to cover, competitor gap opportunities, semantic keywords to include, content goals, and success metrics.`,
+Include: target audience analysis, search intent breakdown, key angles to cover, ${input.deepSeoOptimization ? "competitor gap opportunities, semantic keywords, supporting questions, and content goals" : "a focused keyword and content plan"}, and success metrics.`,
       },
     ],
   });
@@ -233,7 +346,7 @@ Include: target audience analysis, search intent breakdown, key angles to cover,
 
 export async function generateOutline(input: BlogGenerationInput, brief: string): Promise<string> {
   const targetWords = input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
-  const voiceSection = buildVoicePrompt(input.voice ?? null);
+  const voiceSection = buildVoicePrompt(input.voice ?? null, input.voiceConditioning);
   const structure = [
     input.includeIntro && "Introduction",
     input.includeTldr && "TL;DR Summary",
@@ -274,7 +387,7 @@ Format as a structured outline with H1, H2, H3 headings and brief notes for each
 
 export async function generateDraft(input: BlogGenerationInput, outline: string): Promise<string> {
   const targetWords = input.customWordCount ?? WORD_COUNT_MAP[input.blogLength] ?? 1200;
-  const voiceSection = buildVoicePrompt(input.voice ?? null);
+  const voiceSection = buildVoicePrompt(input.voice ?? null, input.voiceConditioning);
 
   const humanizationInstructions = `
 Writing style calibration (0=low, 100=high):
@@ -308,8 +421,8 @@ Requirements:
 - Point of view: ${input.pointOfView}
 - Tone: ${input.tone}
 - Reading level: ${input.readingLevel}
-${input.useSemanticEntities ? "- Include semantic entities and LSI keywords naturally" : ""}
-${input.useNlpTerms ? "- Use NLP-friendly terms and natural language patterns" : ""}
+${input.deepSeoOptimization && input.useSemanticEntities ? "- Include semantic entities and LSI keywords naturally" : ""}
+${input.deepSeoOptimization && input.useNlpTerms ? "- Use NLP-friendly terms and natural language patterns" : ""}
 ${input.geoTarget ? `- Local SEO target: ${input.geoTarget}` : ""}
 ${input.brandName ? `- Brand: ${input.brandName}` : ""}
 ${input.ctaGoal ? `- CTA goal: ${input.ctaGoal}` : ""}
@@ -340,6 +453,7 @@ export async function generateSeoEnhancement(draft: string, input: BlogGeneratio
         content: `Analyze this blog post and return SEO metadata as JSON:
 
 Primary keyword: ${input.primaryKeyword}
+SEO depth: ${input.deepSeoOptimization ? "deep: include topical coverage and practical optimization suggestions" : "standard"}
 
 CONTENT:
 ${draft.slice(0, 4000)}
@@ -373,9 +487,10 @@ export async function generateTransformationPlan(
   targetTopic: string,
   targetFormat: string,
   instructions: string,
-  voice: VoiceProfile | null
+  voice: VoiceProfile | null,
+  voiceConditioning?: VoiceConditioningPayload | null
 ): Promise<string> {
-  const voiceSection = buildVoicePrompt(voice);
+  const voiceSection = buildVoicePrompt(voice, voiceConditioning);
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
@@ -409,9 +524,10 @@ export async function generateRepurposedContent(
   targetFormat: string,
   instructions: string,
   transformationPlan: string,
-  voice: VoiceProfile | null
+  voice: VoiceProfile | null,
+  voiceConditioning?: VoiceConditioningPayload | null
 ): Promise<string> {
-  const voiceSection = buildVoicePrompt(voice);
+  const voiceSection = buildVoicePrompt(voice, voiceConditioning);
   const res = await invokeLLM({
     model: "gpt-5-mini",
     messages: [
@@ -480,9 +596,10 @@ export async function rewriteSection(
   sectionContent: string,
   action: "expand" | "shorten" | "strengthen" | "add_examples" | "add_faq" | "add_cta" | "add_local_seo",
   voice: VoiceProfile | null,
-  context?: string
+  context?: string,
+  voiceConditioning?: VoiceConditioningPayload | null
 ): Promise<string> {
-  const voiceSection = buildVoicePrompt(voice);
+  const voiceSection = buildVoicePrompt(voice, voiceConditioning);
   const actionInstructions: Record<string, string> = {
     expand: "Expand this section with more detail, examples, and depth. Aim for 50% more content.",
     shorten: "Shorten this section to its most essential points. Aim for 50% less content.",

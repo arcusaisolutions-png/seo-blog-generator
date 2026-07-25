@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { VoiceBlendSelector } from "@/components/voice/VoiceBlendSelector";
 import { PenLine, ChevronDown, X, Plus, Zap, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,6 +26,7 @@ const BLOG_LAYOUTS = [
   { value: "faq-driven", label: "FAQ-Driven Post" },
   { value: "local-seo", label: "Local SEO Service Page Hybrid" },
   { value: "pillar", label: "Pillar Post" },
+  { value: "story-led", label: "Story-Led Long-Form Post" },
   { value: "news-commentary", label: "News Commentary / Trend Reaction" },
 ];
 
@@ -69,6 +71,8 @@ export default function NewBlog() {
   const [pointOfView, setPointOfView] = useState("Third Person (They/It)");
   const [outputLanguage, setOutputLanguage] = useState("en");
   const [voiceProfileId, setVoiceProfileId] = useState<string>("none");
+  const [secondaryVoiceProfileId, setSecondaryVoiceProfileId] = useState<string>("none");
+  const [primaryVoiceWeight, setPrimaryVoiceWeight] = useState(100);
   const [blogLength, setBlogLength] = useState("medium");
   const [customWordCount, setCustomWordCount] = useState("");
   const [blogLayout, setBlogLayout] = useState("standard");
@@ -89,6 +93,11 @@ export default function NewBlog() {
   const [keywordDensity, setKeywordDensity] = useState(1.5);
   const [useSemanticEntities, setUseSemanticEntities] = useState(true);
   const [useNlpTerms, setUseNlpTerms] = useState(true);
+  const [deepSeoOptimization, setDeepSeoOptimization] = useState(true);
+  const [imageGenerationEnabled, setImageGenerationEnabled] = useState(false);
+  const [inlineImagePromptsEnabled, setInlineImagePromptsEnabled] = useState(false);
+  const [imageStyle, setImageStyle] = useState("editorial-illustration");
+  const [imageAspectRatio, setImageAspectRatio] = useState("16:9");
 
   // Humanization sliders
   const [sliders, setSliders] = useState<Record<string, number>>({
@@ -128,9 +137,11 @@ export default function NewBlog() {
         tone, complexityLevel, readingLevel, pointOfView, outputLanguage,
         blogLength, customWordCount: customWordCount ? parseInt(customWordCount) : undefined,
         blogLayout, voiceProfileId: voiceProfileId !== "none" ? parseInt(voiceProfileId) : null,
+        secondaryVoiceProfileId: secondaryVoiceProfileId !== "none" ? parseInt(secondaryVoiceProfileId) : null,
+        primaryVoiceWeight,
         includeIntro, includeTldr, includeKeyTakeaways, includeFaq, includeConclusion, includeCtaSection, includeSchemaFaq,
         metaTitle, metaDescription, headingDepth, keywordDensityTarget: keywordDensity,
-        useSemanticEntities, useNlpTerms, ...sliders,
+        useSemanticEntities, useNlpTerms, deepSeoOptimization, imageGenerationEnabled, inlineImagePromptsEnabled, imageStyle, imageAspectRatio, ...sliders,
       });
 
       if (autoRun) {
@@ -343,15 +354,69 @@ export default function NewBlog() {
                   <Slider value={[keywordDensity]} onValueChange={([v]) => setKeywordDensity(v)} min={0.5} max={3} step={0.1} className="mt-3" />
                 </div>
               </div>
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2">
+              <div className="rounded-lg border border-border p-4 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <Label htmlFor="deep-seo" className="cursor-pointer">Deep SEO optimization</Label>
+                    <p className="text-xs text-muted-foreground mt-1">Expand intent, entity, supporting-question, and topical-coverage guidance in the generation pipeline.</p>
+                  </div>
+                  <Switch checked={deepSeoOptimization} onCheckedChange={setDeepSeoOptimization} id="deep-seo" />
+                </div>
+                <div className="flex flex-wrap items-center gap-6">
+                  <div className="flex items-center gap-2">
                   <Switch checked={useSemanticEntities} onCheckedChange={setUseSemanticEntities} id="semantic" />
                   <Label htmlFor="semantic" className="cursor-pointer">Semantic Entities</Label>
-                </div>
-                <div className="flex items-center gap-2">
+                  </div>
+                  <div className="flex items-center gap-2">
                   <Switch checked={useNlpTerms} onCheckedChange={setUseNlpTerms} id="nlp" />
                   <Label htmlFor="nlp" className="cursor-pointer">NLP Terms</Label>
+                  </div>
                 </div>
+              </div>
+              <div className="rounded-lg border border-border p-4 space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <Label htmlFor="blog-image-generation" className="cursor-pointer">Generate a featured image</Label>
+                    <p className="text-xs text-muted-foreground mt-1">Create and save an AI image after the SEO stage completes.</p>
+                  </div>
+                  <Switch checked={imageGenerationEnabled} onCheckedChange={setImageGenerationEnabled} id="blog-image-generation" />
+                </div>
+                {imageGenerationEnabled && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Image Style</Label>
+                        <Select value={imageStyle} onValueChange={setImageStyle}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="editorial-illustration">Editorial Illustration</SelectItem>
+                            <SelectItem value="photorealistic">Photorealistic</SelectItem>
+                            <SelectItem value="minimal-brand">Minimal Brand Graphic</SelectItem>
+                            <SelectItem value="cinematic">Cinematic</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Aspect Ratio</Label>
+                        <Select value={imageAspectRatio} onValueChange={setImageAspectRatio}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="16:9">16:9 Landscape</SelectItem>
+                            <SelectItem value="1:1">1:1 Square</SelectItem>
+                            <SelectItem value="4:3">4:3 Standard</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 rounded-md bg-muted/50 p-3">
+                      <div>
+                        <Label htmlFor="inline-image-prompts" className="cursor-pointer">Create inline section image prompts</Label>
+                        <p className="text-xs text-muted-foreground mt-1">Save optional section prompts with this blog for later generation or variations.</p>
+                      </div>
+                      <Switch checked={inlineImagePromptsEnabled} onCheckedChange={setInlineImagePromptsEnabled} id="inline-image-prompts" />
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -387,17 +452,23 @@ export default function NewBlog() {
           <Card>
             <CardHeader><CardTitle className="text-base">Voice & Tone</CardTitle></CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Brand Voice</Label>
-                  <Select value={voiceProfileId} onValueChange={setVoiceProfileId}>
-                    <SelectTrigger><SelectValue placeholder="No voice selected" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No voice (use sliders)</SelectItem>
-                      {voices.map((v) => <SelectItem key={v.id} value={v.id.toString()}>{v.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div className="grid grid-cols-1 gap-4">
+                <VoiceBlendSelector
+                  voices={voices}
+                  primaryVoiceId={voiceProfileId}
+                  secondaryVoiceId={secondaryVoiceProfileId}
+                  primaryWeight={primaryVoiceWeight}
+                  onPrimaryVoiceChange={(value) => {
+                    setVoiceProfileId(value);
+                    if (value === "none") {
+                      setSecondaryVoiceProfileId("none");
+                      setPrimaryVoiceWeight(100);
+                    }
+                  }}
+                  onSecondaryVoiceChange={setSecondaryVoiceProfileId}
+                  onPrimaryWeightChange={setPrimaryVoiceWeight}
+                  primaryLabel="Primary brand voice"
+                />
                 <div className="space-y-2">
                   <Label>Desired Tone</Label>
                   <Select value={tone} onValueChange={setTone}>
@@ -433,32 +504,41 @@ export default function NewBlog() {
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <Settings2 className="w-4 h-4 text-primary" />
-                Humanization Controls
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {HUMANIZATION_SLIDERS.map(({ key, label, left, right }) => (
-                <div key={key} className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <Label className="text-sm">{label}</Label>
-                    <span className="text-xs text-muted-foreground">{sliders[key]}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground w-20 text-right">{left}</span>
-                    <Slider
-                      value={[sliders[key]]}
-                      onValueChange={([v]) => setSliders((prev) => ({ ...prev, [key]: v }))}
-                      min={0} max={100} step={5}
-                      className="flex-1"
-                    />
-                    <span className="text-xs text-muted-foreground w-20">{right}</span>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
+            <Collapsible>
+              <CardHeader className="py-3">
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" className="w-full justify-between px-0 hover:bg-transparent">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Settings2 className="w-4 h-4 text-primary" />
+                      Advanced Humanization Controls
+                    </CardTitle>
+                    <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                  </Button>
+                </CollapsibleTrigger>
+              </CardHeader>
+              <CollapsibleContent>
+                <CardContent className="space-y-5 pt-0">
+                  {HUMANIZATION_SLIDERS.map(({ key, label, left, right }) => (
+                    <div key={key} className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <Label className="text-sm">{label}</Label>
+                        <span className="text-xs text-muted-foreground">{sliders[key]}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-muted-foreground w-20 text-right">{left}</span>
+                        <Slider
+                          value={[sliders[key]]}
+                          onValueChange={([v]) => setSliders((prev) => ({ ...prev, [key]: v }))}
+                          min={0} max={100} step={5}
+                          className="flex-1"
+                        />
+                        <span className="text-xs text-muted-foreground w-20">{right}</span>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </CollapsibleContent>
+            </Collapsible>
           </Card>
         </TabsContent>
       </Tabs>

@@ -14,6 +14,10 @@ import {
   generateTransformationPlan,
   rewriteSection,
 } from "./ai";
+import { extractUploadedTexts } from "./files";
+import { synthesizeVoiceConditioning, type VoiceConditioningPayload } from "./voiceConditioning";
+import { generateImage } from "./_core/imageGeneration";
+import type { BlogDraft, VoiceProfile } from "../drizzle/schema";
 import {
   createBlogDraft,
   createGeneratedImage,
@@ -50,6 +54,86 @@ import {
   upsertUserSettings,
 } from "./db";
 
+const voiceDnaSchema = z.object({
+  formality: z.number().min(0).max(100), opinionated: z.number().min(0).max(100), elaborate: z.number().min(0).max(100),
+  bold: z.number().min(0).max(100), storytelling: z.number().min(0).max(100), humor: z.number().min(0).max(100),
+  persuasion: z.number().min(0).max(100), technical: z.number().min(0).max(100),
+});
+
+const voiceAnalysisSchema = z.object({
+  voiceName: z.string().min(1).max(255),
+  summaryDescription: z.string(),
+  analysisData: z.record(z.string(), z.unknown()),
+  dna: voiceDnaSchema,
+  doRules: z.array(z.string()), dontRules: z.array(z.string()), signaturePhrases: z.array(z.string()),
+  sentencePatternExamples: z.array(z.string()), preferredOpenings: z.array(z.string()), preferredTransitions: z.array(z.string()), preferredClosings: z.array(z.string()),
+  preferredCtaStyles: z.array(z.string()), vocabularyPreferences: z.array(z.string()), forbiddenPhrases: z.array(z.string()),
+  sampleExcerpts: z.array(z.string()), confidenceScore: z.number().min(0).max(100),
+  toneProfile: z.object({ formalToCasual: z.number(), reservedToBold: z.number(), neutralToOpinionated: z.number(), dryToPlayful: z.number(), softToAuthoritative: z.number(), conciseToElaborate: z.number() }),
+  styleProfile: z.object({ avgSentenceLength: z.number(), avgParagraphLength: z.number(), rhetoricalQuestionFrequency: z.number(), storytellingLevel: z.number(), metaphorLevel: z.number(), readabilityLevel: z.string(), vocabularyComplexity: z.string(), formattingPreference: z.array(z.string()) }),
+  personalityProfile: z.object({ warmth: z.number(), confidence: z.number(), intensity: z.number(), wit: z.number(), empathy: z.number(), directness: z.number() }),
+  angleSummary: z.string(),
+  analysisSummary: z.string(),
+});
+
+const uploadedTextFileSchema = z.object({
+  fileName: z.string().min(1).max(255),
+  mimeType: z.string().max(100),
+  fileSize: z.number().int().positive().max(5 * 1024 * 1024),
+  dataBase64: z.string().min(1).max(8 * 1024 * 1024),
+});
+
+type VoiceSelection = {
+  voiceProfileId?: number | null;
+  secondaryVoiceProfileId?: number | null;
+  primaryVoiceWeight?: number | null;
+};
+
+async function resolveVoiceSelection(userId: number, selection: VoiceSelection): Promise<{
+  voice: VoiceProfile | null;
+  conditioning: VoiceConditioningPayload | null;
+}> {
+  if (!selection.voiceProfileId) return { voice: null, conditioning: null };
+  const voice = await getVoiceProfileById(selection.voiceProfileId, userId);
+  if (!voice) throw new Error("Primary voice profile not found");
+  if (!selection.secondaryVoiceProfileId) {
+    return { voice, conditioning: synthesizeVoiceConditioning(voice) };
+  }
+  if (selection.secondaryVoiceProfileId === voice.id) {
+    throw new Error("Choose two different voices to create a blend");
+  }
+  const secondary = await getVoiceProfileById(selection.secondaryVoiceProfileId, userId);
+  if (!secondary) throw new Error("Secondary voice profile not found");
+  return {
+    voice,
+    conditioning: synthesizeVoiceConditioning(voice, secondary, selection.primaryVoiceWeight ?? 50),
+  };
+}
+
+function buildBlogGenerationInput(draft: BlogDraft, voice: VoiceProfile | null, voiceConditioning: VoiceConditioningPayload | null) {
+  return {
+    title: draft.title, topic: draft.topic ?? "", primaryKeyword: draft.primaryKeyword ?? "",
+    secondaryKeywords: (draft.secondaryKeywords as string[]) ?? [], searchIntent: draft.searchIntent ?? "",
+    audience: draft.audience ?? "", funnelStage: draft.funnelStage ?? "", geoTarget: draft.geoTarget ?? "",
+    brandName: draft.brandName ?? "", ctaGoal: draft.ctaGoal ?? "", tone: draft.tone ?? "professional",
+    complexityLevel: draft.complexityLevel ?? "intermediate", readingLevel: draft.readingLevel ?? "general",
+    pointOfView: draft.pointOfView ?? "third-person", outputLanguage: draft.outputLanguage ?? "en",
+    blogLength: draft.blogLength ?? "medium", customWordCount: draft.customWordCount ?? undefined,
+    blogLayout: draft.blogLayout ?? "standard", includeIntro: draft.includeIntro ?? true,
+    includeTldr: draft.includeTldr ?? false, includeKeyTakeaways: draft.includeKeyTakeaways ?? false,
+    includeFaq: draft.includeFaq ?? false, includeConclusion: draft.includeConclusion ?? true,
+    includeCtaSection: draft.includeCtaSection ?? true, includeSchemaFaq: draft.includeSchemaFaq ?? false,
+    headingDepth: draft.headingDepth ?? "h2-h3", keywordDensityTarget: draft.keywordDensityTarget ?? 1.5,
+    useSemanticEntities: draft.useSemanticEntities ?? true, useNlpTerms: draft.useNlpTerms ?? true,
+    deepSeoOptimization: draft.deepSeoOptimization ?? true,
+    sliderFormality: draft.sliderFormality ?? 50, sliderOpinionated: draft.sliderOpinionated ?? 50,
+    sliderElaborate: draft.sliderElaborate ?? 50, sliderBold: draft.sliderBold ?? 50,
+    sliderStorytelling: draft.sliderStorytelling ?? 50, sliderHumor: draft.sliderHumor ?? 50,
+    sliderPersuasion: draft.sliderPersuasion ?? 50, sliderTechnical: draft.sliderTechnical ?? 50,
+    voice, voiceConditioning,
+  };
+}
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -80,7 +164,16 @@ export const appRouter = router({
 
     getSources: publicProcedure
       .input(z.object({ voiceProfileId: z.number() }))
-      .query(({ ctx, input }) => getVoiceSourceFiles(input.voiceProfileId)),
+      .query(async ({ ctx, input }) => {
+        const userId = ctx.user?.id || 1;
+        const profile = await getVoiceProfileById(input.voiceProfileId, userId);
+        if (!profile) throw new Error("Voice profile not found");
+        return getVoiceSourceFiles(input.voiceProfileId, userId);
+      }),
+
+    extractFiles: publicProcedure
+      .input(z.object({ files: z.array(uploadedTextFileSchema).min(1).max(8) }))
+      .mutation(async ({ input }) => ({ files: await extractUploadedTexts(input.files) })),
 
     create: publicProcedure
       .input(z.object({
@@ -107,39 +200,31 @@ export const appRouter = router({
     saveAnalysis: publicProcedure
       .input(z.object({
         voiceProfileId: z.number(),
-        analysis: z.object({
-          voiceName: z.string(),
-          summaryDescription: z.string(),
-          analysisData: z.record(z.string(), z.unknown()),
-          dna: z.object({
-            formality: z.number(), opinionated: z.number(), elaborate: z.number(),
-            bold: z.number(), storytelling: z.number(), humor: z.number(),
-            persuasion: z.number(), technical: z.number(),
-          }),
-          doRules: z.array(z.string()),
-          dontRules: z.array(z.string()),
-          signaturePhrases: z.array(z.string()),
-          sentencePatternExamples: z.array(z.string()),
-          preferredOpenings: z.array(z.string()),
-          preferredTransitions: z.array(z.string()),
-          preferredCtaStyles: z.array(z.string()),
-          vocabularyPreferences: z.array(z.string()),
-          forbiddenPhrases: z.array(z.string()),
-          sampleExcerpts: z.array(z.string()),
-          confidenceScore: z.number(),
-        }),
+        name: z.string().min(1).max(255).optional(),
+        analysis: voiceAnalysisSchema,
         sourceSamples: z.array(z.object({
           content: z.string(),
-          fileName: z.string().optional(),
-          fileType: z.string().optional(),
+          originalFileName: z.string().optional(),
+          mimeType: z.string().optional(),
+          fileSize: z.number().int().optional(),
         })).optional(),
+        sourceTextCombined: z.string().max(160_000).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         const { analysis, voiceProfileId, sourceSamples } = input;
+        const userId = ctx.user?.id || 1;
+        const combinedText = input.sourceTextCombined ?? (sourceSamples?.map((sample) => sample.content).join("\n\n") ?? "");
         const updated = await updateVoiceProfile(voiceProfileId, ctx.user?.id || 1, {
-          name: analysis.voiceName,
+          name: input.name ?? analysis.voiceName,
           summaryDescription: analysis.summaryDescription,
           analysisData: analysis.analysisData,
+          sourceTextCombined: combinedText,
+          sourceSampleCount: sourceSamples?.length ?? 0,
+          toneProfile: analysis.toneProfile,
+          styleProfile: analysis.styleProfile,
+          personalityProfile: analysis.personalityProfile,
+          angleSummary: analysis.angleSummary,
+          analysisSummary: analysis.analysisSummary,
           dnaFormality: analysis.dna.formality,
           dnaOpinionated: analysis.dna.opinionated,
           dnaElaborate: analysis.dna.elaborate,
@@ -154,6 +239,7 @@ export const appRouter = router({
           sentencePatternExamples: analysis.sentencePatternExamples,
           preferredOpenings: analysis.preferredOpenings,
           preferredTransitions: analysis.preferredTransitions,
+          preferredClosings: analysis.preferredClosings,
           preferredCtaStyles: analysis.preferredCtaStyles,
           vocabularyPreferences: analysis.vocabularyPreferences,
           forbiddenPhrases: analysis.forbiddenPhrases,
@@ -164,10 +250,14 @@ export const appRouter = router({
           for (const sample of sourceSamples) {
             await createVoiceSourceFile({
               voiceProfileId,
-              userId: ctx.user?.id || 1,
+              userId,
               content: sample.content,
-              fileName: sample.fileName,
-              fileType: sample.fileType,
+              fileName: sample.originalFileName,
+              fileType: sample.mimeType,
+              originalFileName: sample.originalFileName,
+              mimeType: sample.mimeType,
+              fileSize: sample.fileSize,
+              extractedText: sample.content,
               wordCount: sample.content.split(/\s+/).length,
             });
           }
@@ -198,7 +288,8 @@ export const appRouter = router({
       }))
       .mutation(({ ctx, input }) => {
         const { id, ...data } = input;
-        return updateVoiceProfile(id, ctx.user?.id || 1, data as any);
+        const updateData: Record<string, unknown> = { ...data };
+        return updateVoiceProfile(id, ctx.user?.id || 1, updateData as any);
       }),
 
     delete: publicProcedure
@@ -254,6 +345,9 @@ export const appRouter = router({
         customWordCount: z.number().optional(),
         blogLayout: z.string().optional(),
         voiceProfileId: z.number().nullable().optional(),
+        secondaryVoiceProfileId: z.number().nullable().optional(),
+        primaryVoiceWeight: z.number().min(0).max(100).optional(),
+        secondaryVoiceWeight: z.number().min(0).max(100).optional(),
         status: z.enum(["brief", "outline", "draft", "final", "published"]).optional(),
         contentBrief: z.string().optional(),
         contentOutline: z.string().optional(),
@@ -274,6 +368,11 @@ export const appRouter = router({
         keywordDensityTarget: z.number().optional(),
         useSemanticEntities: z.boolean().optional(),
         useNlpTerms: z.boolean().optional(),
+        deepSeoOptimization: z.boolean().optional(),
+        imageGenerationEnabled: z.boolean().optional(),
+        inlineImagePromptsEnabled: z.boolean().optional(),
+        imageStyle: z.string().optional(),
+        imageAspectRatio: z.string().optional(),
         sliderFormality: z.number().optional(),
         sliderOpinionated: z.number().optional(),
         sliderElaborate: z.number().optional(),
@@ -283,9 +382,23 @@ export const appRouter = router({
         sliderPersuasion: z.number().optional(),
         sliderTechnical: z.number().optional(),
       }))
-      .mutation(({ ctx, input }) => {
+      .mutation(async ({ ctx, input }) => {
         const { id, ...data } = input;
-        return updateBlogDraft(id, ctx.user?.id || 1, data as any);
+        const updateData: Record<string, unknown> = { ...data };
+        const userId = ctx.user?.id || 1;
+        const existing = await getBlogDraftById(id, userId);
+        if (!existing) throw new Error("Draft not found");
+        if (data.voiceProfileId !== undefined || data.secondaryVoiceProfileId !== undefined || data.primaryVoiceWeight !== undefined) {
+          const selection = await resolveVoiceSelection(userId, {
+            voiceProfileId: data.voiceProfileId === undefined ? existing.voiceProfileId : data.voiceProfileId,
+            secondaryVoiceProfileId: data.secondaryVoiceProfileId === undefined ? existing.secondaryVoiceProfileId : data.secondaryVoiceProfileId,
+            primaryVoiceWeight: data.primaryVoiceWeight === undefined ? existing.primaryVoiceWeight : data.primaryVoiceWeight,
+          });
+          updateData.voiceConditioning = selection.conditioning as unknown as Record<string, unknown> | null;
+          updateData.primaryVoiceWeight = selection.conditioning?.primaryWeight ?? 100;
+          updateData.secondaryVoiceWeight = selection.conditioning?.secondaryWeight ?? 0;
+        }
+        return updateBlogDraft(id, userId, updateData as any);
       }),
 
     delete: publicProcedure
@@ -296,135 +409,94 @@ export const appRouter = router({
     generateBrief: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
+        const userId = ctx.user?.id || 1;
+        const draft = await getBlogDraftById(input.draftId, userId);
         if (!draft) throw new Error("Draft not found");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
-        const brief = await generateContentBrief({
-          title: draft.title,
-          topic: draft.topic ?? "",
-          primaryKeyword: draft.primaryKeyword ?? "",
-          secondaryKeywords: (draft.secondaryKeywords as string[]) ?? [],
-          searchIntent: draft.searchIntent ?? "",
-          audience: draft.audience ?? "",
-          funnelStage: draft.funnelStage ?? "",
-          geoTarget: draft.geoTarget ?? "",
-          brandName: draft.brandName ?? "",
-          ctaGoal: draft.ctaGoal ?? "",
-          tone: draft.tone ?? "professional",
-          complexityLevel: draft.complexityLevel ?? "intermediate",
-          readingLevel: draft.readingLevel ?? "general",
-          pointOfView: draft.pointOfView ?? "third-person",
-          outputLanguage: draft.outputLanguage ?? "en",
-          blogLength: draft.blogLength ?? "medium",
-          customWordCount: draft.customWordCount ?? undefined,
-          blogLayout: draft.blogLayout ?? "standard",
-          includeIntro: draft.includeIntro ?? true,
-          includeTldr: draft.includeTldr ?? false,
-          includeKeyTakeaways: draft.includeKeyTakeaways ?? false,
-          includeFaq: draft.includeFaq ?? false,
-          includeConclusion: draft.includeConclusion ?? true,
-          includeCtaSection: draft.includeCtaSection ?? true,
-          includeSchemaFaq: draft.includeSchemaFaq ?? false,
-          headingDepth: draft.headingDepth ?? "h2-h3",
-          keywordDensityTarget: draft.keywordDensityTarget ?? 1.5,
-          useSemanticEntities: draft.useSemanticEntities ?? true,
-          useNlpTerms: draft.useNlpTerms ?? true,
-          sliderFormality: draft.sliderFormality ?? 50,
-          sliderOpinionated: draft.sliderOpinionated ?? 50,
-          sliderElaborate: draft.sliderElaborate ?? 50,
-          sliderBold: draft.sliderBold ?? 50,
-          sliderStorytelling: draft.sliderStorytelling ?? 50,
-          sliderHumor: draft.sliderHumor ?? 50,
-          sliderPersuasion: draft.sliderPersuasion ?? 50,
-          sliderTechnical: draft.sliderTechnical ?? 50,
-          voice,
-        });
-        await updateBlogDraft(input.draftId, ctx.user?.id || 1, { contentBrief: brief, status: "brief" });
-        await logUsage({ userId: ctx.user?.id || 1, action: "generate_brief", resourceType: "blog_draft", resourceId: input.draftId });
+        const selection = await resolveVoiceSelection(userId, draft);
+        const brief = await generateContentBrief(buildBlogGenerationInput(draft, selection.voice, selection.conditioning));
+        await updateBlogDraft(input.draftId, userId, { contentBrief: brief, status: "brief", voiceConditioning: selection.conditioning as unknown as Record<string, unknown> | null });
+        await logUsage({ userId, action: "generate_brief", resourceType: "blog_draft", resourceId: input.draftId });
         return { brief };
       }),
 
     generateOutline: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
+        const userId = ctx.user?.id || 1;
+        const draft = await getBlogDraftById(input.draftId, userId);
         if (!draft) throw new Error("Draft not found");
         if (!draft.contentBrief) throw new Error("Generate brief first");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
-        const genInput = {
-          title: draft.title, topic: draft.topic ?? "", primaryKeyword: draft.primaryKeyword ?? "",
-          secondaryKeywords: (draft.secondaryKeywords as string[]) ?? [], searchIntent: draft.searchIntent ?? "",
-          audience: draft.audience ?? "", funnelStage: draft.funnelStage ?? "", geoTarget: draft.geoTarget ?? "",
-          brandName: draft.brandName ?? "", ctaGoal: draft.ctaGoal ?? "", tone: draft.tone ?? "professional",
-          complexityLevel: draft.complexityLevel ?? "intermediate", readingLevel: draft.readingLevel ?? "general",
-          pointOfView: draft.pointOfView ?? "third-person", outputLanguage: draft.outputLanguage ?? "en",
-          blogLength: draft.blogLength ?? "medium", customWordCount: draft.customWordCount ?? undefined,
-          blogLayout: draft.blogLayout ?? "standard", includeIntro: draft.includeIntro ?? true,
-          includeTldr: draft.includeTldr ?? false, includeKeyTakeaways: draft.includeKeyTakeaways ?? false,
-          includeFaq: draft.includeFaq ?? false, includeConclusion: draft.includeConclusion ?? true,
-          includeCtaSection: draft.includeCtaSection ?? true, includeSchemaFaq: draft.includeSchemaFaq ?? false,
-          headingDepth: draft.headingDepth ?? "h2-h3", keywordDensityTarget: draft.keywordDensityTarget ?? 1.5,
-          useSemanticEntities: draft.useSemanticEntities ?? true, useNlpTerms: draft.useNlpTerms ?? true,
-          sliderFormality: draft.sliderFormality ?? 50, sliderOpinionated: draft.sliderOpinionated ?? 50,
-          sliderElaborate: draft.sliderElaborate ?? 50, sliderBold: draft.sliderBold ?? 50,
-          sliderStorytelling: draft.sliderStorytelling ?? 50, sliderHumor: draft.sliderHumor ?? 50,
-          sliderPersuasion: draft.sliderPersuasion ?? 50, sliderTechnical: draft.sliderTechnical ?? 50,
-          voice,
-        };
-        const outline = await generateOutline(genInput, draft.contentBrief);
-        await updateBlogDraft(input.draftId, ctx.user?.id || 1, { contentOutline: outline, status: "outline" });
-        await logUsage({ userId: ctx.user?.id || 1, action: "generate_outline", resourceType: "blog_draft", resourceId: input.draftId });
+        const selection = await resolveVoiceSelection(userId, draft);
+        const outline = await generateOutline(buildBlogGenerationInput(draft, selection.voice, selection.conditioning), draft.contentBrief);
+        await updateBlogDraft(input.draftId, userId, { contentOutline: outline, status: "outline", voiceConditioning: selection.conditioning as unknown as Record<string, unknown> | null });
+        await logUsage({ userId, action: "generate_outline", resourceType: "blog_draft", resourceId: input.draftId });
         return { outline };
       }),
 
     generateDraft: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
+        const userId = ctx.user?.id || 1;
+        const draft = await getBlogDraftById(input.draftId, userId);
         if (!draft) throw new Error("Draft not found");
         if (!draft.contentOutline) throw new Error("Generate outline first");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
-        const genInput = {
-          title: draft.title, topic: draft.topic ?? "", primaryKeyword: draft.primaryKeyword ?? "",
-          secondaryKeywords: (draft.secondaryKeywords as string[]) ?? [], searchIntent: draft.searchIntent ?? "",
-          audience: draft.audience ?? "", funnelStage: draft.funnelStage ?? "", geoTarget: draft.geoTarget ?? "",
-          brandName: draft.brandName ?? "", ctaGoal: draft.ctaGoal ?? "", tone: draft.tone ?? "professional",
-          complexityLevel: draft.complexityLevel ?? "intermediate", readingLevel: draft.readingLevel ?? "general",
-          pointOfView: draft.pointOfView ?? "third-person", outputLanguage: draft.outputLanguage ?? "en",
-          blogLength: draft.blogLength ?? "medium", customWordCount: draft.customWordCount ?? undefined,
-          blogLayout: draft.blogLayout ?? "standard", includeIntro: draft.includeIntro ?? true,
-          includeTldr: draft.includeTldr ?? false, includeKeyTakeaways: draft.includeKeyTakeaways ?? false,
-          includeFaq: draft.includeFaq ?? false, includeConclusion: draft.includeConclusion ?? true,
-          includeCtaSection: draft.includeCtaSection ?? true, includeSchemaFaq: draft.includeSchemaFaq ?? false,
-          headingDepth: draft.headingDepth ?? "h2-h3", keywordDensityTarget: draft.keywordDensityTarget ?? 1.5,
-          useSemanticEntities: draft.useSemanticEntities ?? true, useNlpTerms: draft.useNlpTerms ?? true,
-          sliderFormality: draft.sliderFormality ?? 50, sliderOpinionated: draft.sliderOpinionated ?? 50,
-          sliderElaborate: draft.sliderElaborate ?? 50, sliderBold: draft.sliderBold ?? 50,
-          sliderStorytelling: draft.sliderStorytelling ?? 50, sliderHumor: draft.sliderHumor ?? 50,
-          sliderPersuasion: draft.sliderPersuasion ?? 50, sliderTechnical: draft.sliderTechnical ?? 50,
-          voice,
-        };
-        const draftContent = await generateDraft(genInput, draft.contentOutline);
+        const selection = await resolveVoiceSelection(userId, draft);
+        const draftContent = await generateDraft(buildBlogGenerationInput(draft, selection.voice, selection.conditioning), draft.contentOutline);
         const wordCount = draftContent.split(/\s+/).length;
-        await updateBlogDraft(input.draftId, ctx.user?.id || 1, { contentDraft: draftContent, status: "draft", wordCount });
-        await logUsage({ userId: ctx.user?.id || 1, action: "generate_draft", resourceType: "blog_draft", resourceId: input.draftId, wordsGenerated: wordCount });
+        await updateBlogDraft(input.draftId, userId, { contentDraft: draftContent, status: "draft", wordCount, voiceConditioning: selection.conditioning as unknown as Record<string, unknown> | null });
+        await logUsage({ userId, action: "generate_draft", resourceType: "blog_draft", resourceId: input.draftId, wordsGenerated: wordCount });
         return { draft: draftContent, wordCount };
       }),
 
     generateSeo: publicProcedure
       .input(z.object({ draftId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
+        const userId = ctx.user?.id || 1;
+        const draft = await getBlogDraftById(input.draftId, userId);
         if (!draft) throw new Error("Draft not found");
         const content = draft.contentFinal ?? draft.contentDraft ?? "";
         if (!content) throw new Error("Generate draft first");
-        const seo = await generateSeoEnhancement(content, {
-          title: draft.title, primaryKeyword: draft.primaryKeyword ?? "",
-        } as any);
-        await updateBlogDraft(input.draftId, ctx.user?.id || 1, {
+        const seo = await generateSeoEnhancement(content, buildBlogGenerationInput(draft, null, null));
+        await updateBlogDraft(input.draftId, userId, {
           metaTitle: seo.metaTitle, metaDescription: seo.metaDescription, slugSuggestion: seo.slug, status: "final",
         });
-        return seo;
+        if (!draft.imageGenerationEnabled) return seo;
+
+        try {
+          const prompts = await generateImagePrompts(
+            draft.title,
+            draft.topic ?? draft.primaryKeyword ?? draft.title,
+            draft.audience ?? "",
+            draft.imageStyle ?? "photorealistic"
+          );
+          const inlinePrompts = draft.inlineImagePromptsEnabled
+            ? await Promise.all(prompts.sections.map((prompt, index) => createGeneratedImage({
+              userId,
+              blogDraftId: draft.id,
+              prompt,
+              altText: `Illustration for ${draft.title}, section ${index + 1}`,
+              style: draft.imageStyle ?? "photorealistic",
+              aspectRatio: draft.imageAspectRatio ?? "16:9",
+            })))
+            : [];
+          const aspectRatio = draft.imageAspectRatio ?? "16:9";
+          const generated = await generateImage({
+            prompt: `${prompts.featured}\n\nCompose the image for a ${aspectRatio} aspect ratio.`,
+          });
+          const image = await createGeneratedImage({
+            userId,
+            blogDraftId: draft.id,
+            prompt: prompts.featured,
+            imageUrl: generated.url,
+            altText: prompts.altText,
+            style: draft.imageStyle ?? "photorealistic",
+            aspectRatio,
+          });
+          return { ...seo, image, inlinePrompts };
+        } catch (error) {
+          const imageError = error instanceof Error ? error.message : "Image generation failed";
+          return { ...seo, imageError };
+        }
       }),
 
     rewriteSection: publicProcedure
@@ -435,10 +507,11 @@ export const appRouter = router({
         context: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const draft = await getBlogDraftById(input.draftId, ctx.user?.id || 1);
+        const userId = ctx.user?.id || 1;
+        const draft = await getBlogDraftById(input.draftId, userId);
         if (!draft) throw new Error("Draft not found");
-        const voice = draft.voiceProfileId ? await getVoiceProfileById(draft.voiceProfileId, ctx.user?.id || 1) : null;
-        const result = await rewriteSection(input.sectionContent, input.action, voice, input.context);
+        const selection = await resolveVoiceSelection(userId, draft);
+        const result = await rewriteSection(input.sectionContent, input.action, selection.voice, input.context, selection.conditioning);
         return { content: result };
       }),
 
@@ -467,46 +540,62 @@ export const appRouter = router({
         targetFormat: z.string().optional(),
         transformationInstructions: z.string().optional(),
         voiceProfileId: z.number().optional(),
+        secondaryVoiceProfileId: z.number().optional(),
+        primaryVoiceWeight: z.number().min(0).max(100).optional(),
       }))
-      .mutation(({ ctx, input }) => createRepurposeSession({ userId: ctx.user?.id || 1, ...input })),
+      .mutation(async ({ ctx, input }) => {
+        const userId = ctx.user?.id || 1;
+        const selection = await resolveVoiceSelection(userId, input);
+        return createRepurposeSession({
+          userId,
+          ...input,
+          primaryVoiceWeight: selection.conditioning?.primaryWeight ?? 100,
+          secondaryVoiceWeight: selection.conditioning?.secondaryWeight ?? 0,
+          voiceConditioning: selection.conditioning as unknown as Record<string, unknown> | null,
+        });
+      }),
 
     generatePlan: publicProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const session = await getRepurposeSessionById(input.sessionId, ctx.user?.id || 1);
+        const userId = ctx.user?.id || 1;
+        const session = await getRepurposeSessionById(input.sessionId, userId);
         if (!session) throw new Error("Session not found");
-        const voice = session.voiceProfileId ? await getVoiceProfileById(session.voiceProfileId, ctx.user?.id || 1) : null;
-        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { status: "planning" });
+        const selection = await resolveVoiceSelection(userId, session);
+        await updateRepurposeSession(input.sessionId, userId, { status: "planning" });
         const plan = await generateTransformationPlan(
           session.sourceContent ?? "",
           session.targetTopic ?? "",
           session.targetFormat ?? "blog",
           session.transformationInstructions ?? "",
-          voice
+          selection.voice,
+          selection.conditioning
         );
-        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { transformationPlan: plan, status: "planning" });
+        await updateRepurposeSession(input.sessionId, userId, { transformationPlan: plan, status: "planning", voiceConditioning: selection.conditioning as unknown as Record<string, unknown> | null });
         return { plan };
       }),
 
     generateContent: publicProcedure
       .input(z.object({ sessionId: z.number() }))
       .mutation(async ({ ctx, input }) => {
-        const session = await getRepurposeSessionById(input.sessionId, ctx.user?.id || 1);
+        const userId = ctx.user?.id || 1;
+        const session = await getRepurposeSessionById(input.sessionId, userId);
         if (!session) throw new Error("Session not found");
         if (!session.transformationPlan) throw new Error("Generate plan first");
-        const voice = session.voiceProfileId ? await getVoiceProfileById(session.voiceProfileId, ctx.user?.id || 1) : null;
-        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { status: "generating" });
+        const selection = await resolveVoiceSelection(userId, session);
+        await updateRepurposeSession(input.sessionId, userId, { status: "generating" });
         const output = await generateRepurposedContent(
           session.sourceContent ?? "",
           session.targetTopic ?? "",
           session.targetFormat ?? "blog",
           session.transformationInstructions ?? "",
           session.transformationPlan,
-          voice
+          selection.voice,
+          selection.conditioning
         );
         const wordCount = output.split(/\s+/).length;
-        await updateRepurposeSession(input.sessionId, ctx.user?.id || 1, { outputContent: output, status: "complete" });
-        await logUsage({ userId: ctx.user?.id || 1, action: "repurpose_content", resourceType: "repurpose_session", resourceId: input.sessionId, wordsGenerated: wordCount });
+        await updateRepurposeSession(input.sessionId, userId, { outputContent: output, status: "complete", voiceConditioning: selection.conditioning as unknown as Record<string, unknown> | null });
+        await logUsage({ userId, action: "repurpose_content", resourceType: "repurpose_session", resourceId: input.sessionId, wordsGenerated: wordCount });
         return { content: output, wordCount };
       }),
 
@@ -515,15 +604,32 @@ export const appRouter = router({
         id: z.number(),
         title: z.string().optional(),
         sourceContent: z.string().optional(),
+        sourceFileName: z.string().optional(),
         targetTopic: z.string().optional(),
         targetFormat: z.string().optional(),
         transformationInstructions: z.string().optional(),
         voiceProfileId: z.number().nullable().optional(),
+        secondaryVoiceProfileId: z.number().nullable().optional(),
+        primaryVoiceWeight: z.number().min(0).max(100).optional(),
         outputContent: z.string().optional(),
       }))
-      .mutation(({ ctx, input }) => {
+      .mutation(async ({ ctx, input }) => {
         const { id, ...data } = input;
-        return updateRepurposeSession(id, ctx.user?.id || 1, data as any);
+        const updateData: Record<string, unknown> = { ...data };
+        const userId = ctx.user?.id || 1;
+        const existing = await getRepurposeSessionById(id, userId);
+        if (!existing) throw new Error("Session not found");
+        if (data.voiceProfileId !== undefined || data.secondaryVoiceProfileId !== undefined || data.primaryVoiceWeight !== undefined) {
+          const selection = await resolveVoiceSelection(userId, {
+            voiceProfileId: data.voiceProfileId === undefined ? existing.voiceProfileId : data.voiceProfileId,
+            secondaryVoiceProfileId: data.secondaryVoiceProfileId === undefined ? existing.secondaryVoiceProfileId : data.secondaryVoiceProfileId,
+            primaryVoiceWeight: data.primaryVoiceWeight === undefined ? existing.primaryVoiceWeight : data.primaryVoiceWeight,
+          });
+          updateData.voiceConditioning = selection.conditioning as unknown as Record<string, unknown> | null;
+          updateData.primaryVoiceWeight = selection.conditioning?.primaryWeight ?? 100;
+          updateData.secondaryVoiceWeight = selection.conditioning?.secondaryWeight ?? 0;
+        }
+        return updateRepurposeSession(id, userId, updateData as any);
       }),
   }),
 
@@ -541,6 +647,34 @@ export const appRouter = router({
       .mutation(({ ctx, input }) =>
         generateImagePrompts(input.blogTitle, input.topic, input.audience ?? "", input.style)
       ),
+
+    generate: publicProcedure
+      .input(z.object({
+        prompt: z.string().min(1).max(8_000),
+        altText: z.string().optional(),
+        style: z.string().optional(),
+        aspectRatio: z.string().optional(),
+        blogDraftId: z.number().optional(),
+        variation: z.boolean().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const aspectRatio = input.aspectRatio ?? "16:9";
+        const prompt = [
+          input.prompt,
+          input.variation ? "Create a distinct visual variation while preserving the subject and intent." : "",
+          `Compose the image for a ${aspectRatio} aspect ratio.`,
+        ].filter(Boolean).join("\n\n");
+        const generated = await generateImage({ prompt });
+        return createGeneratedImage({
+          userId: ctx.user?.id || 1,
+          blogDraftId: input.blogDraftId,
+          prompt,
+          imageUrl: generated.url,
+          altText: input.altText,
+          style: input.style ?? "photorealistic",
+          aspectRatio,
+        });
+      }),
 
     save: publicProcedure
       .input(z.object({

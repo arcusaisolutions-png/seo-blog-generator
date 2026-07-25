@@ -64,6 +64,7 @@ export const voiceProfiles = mysqlTable("voice_profiles", {
   sentencePatternExamples: json("sentencePatternExamples").$type<string[]>(),
   preferredOpenings: json("preferredOpenings").$type<string[]>(),
   preferredTransitions: json("preferredTransitions").$type<string[]>(),
+  preferredClosings: json("preferredClosings").$type<string[]>(),
   preferredCtaStyles: json("preferredCtaStyles").$type<string[]>(),
   vocabularyPreferences: json("vocabularyPreferences").$type<string[]>(),
   forbiddenPhrases: json("forbiddenPhrases").$type<string[]>(),
@@ -71,6 +72,38 @@ export const voiceProfiles = mysqlTable("voice_profiles", {
   confidenceScore: float("confidenceScore").default(0),
   // Full analysis JSON blob
   analysisData: json("analysisData").$type<Record<string, unknown>>(),
+  // Normalized fingerprint data. These fields keep the analysis reusable without
+  // requiring prompt builders to reverse engineer free-form prose.
+  sourceTextCombined: text("sourceTextCombined"),
+  sourceSampleCount: int("sourceSampleCount").default(0),
+  toneProfile: json("toneProfile").$type<{
+    formalToCasual: number;
+    reservedToBold: number;
+    neutralToOpinionated: number;
+    dryToPlayful: number;
+    softToAuthoritative: number;
+    conciseToElaborate: number;
+  }>(),
+  styleProfile: json("styleProfile").$type<{
+    avgSentenceLength: number;
+    avgParagraphLength: number;
+    rhetoricalQuestionFrequency: number;
+    storytellingLevel: number;
+    metaphorLevel: number;
+    readabilityLevel: string;
+    vocabularyComplexity: string;
+    formattingPreference: string[];
+  }>(),
+  personalityProfile: json("personalityProfile").$type<{
+    warmth: number;
+    confidence: number;
+    intensity: number;
+    wit: number;
+    empathy: number;
+    directness: number;
+  }>(),
+  angleSummary: text("angleSummary"),
+  analysisSummary: text("analysisSummary"),
   isDemo: boolean("isDemo").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -85,6 +118,12 @@ export const voiceSourceFiles = mysqlTable("voice_source_files", {
   userId: int("userId").notNull(),
   fileName: varchar("fileName", { length: 255 }),
   fileType: varchar("fileType", { length: 50 }),
+  // Keep the original generic fields above for backwards compatibility while
+  // exposing a source-file shape that is meaningful to callers.
+  originalFileName: varchar("originalFileName", { length: 255 }),
+  mimeType: varchar("mimeType", { length: 100 }),
+  fileSize: int("fileSize"),
+  extractedText: text("extractedText"),
   content: text("content").notNull(),
   wordCount: int("wordCount").default(0),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -98,6 +137,10 @@ export const blogDrafts = mysqlTable("blog_drafts", {
   userId: int("userId").notNull(),
   workspaceId: int("workspaceId"),
   voiceProfileId: int("voiceProfileId"),
+  secondaryVoiceProfileId: int("secondaryVoiceProfileId"),
+  primaryVoiceWeight: int("primaryVoiceWeight").default(100),
+  secondaryVoiceWeight: int("secondaryVoiceWeight").default(0),
+  voiceConditioning: json("voiceConditioning").$type<Record<string, unknown>>(),
   title: varchar("title", { length: 500 }).notNull(),
   status: mysqlEnum("status", ["brief", "outline", "draft", "final", "published"]).default("draft").notNull(),
   // Generation inputs
@@ -135,6 +178,11 @@ export const blogDrafts = mysqlTable("blog_drafts", {
   keywordDensityTarget: float("keywordDensityTarget").default(1.5),
   useSemanticEntities: boolean("useSemanticEntities").default(true),
   useNlpTerms: boolean("useNlpTerms").default(true),
+  deepSeoOptimization: boolean("deepSeoOptimization").default(true),
+  imageGenerationEnabled: boolean("imageGenerationEnabled").default(false),
+  inlineImagePromptsEnabled: boolean("inlineImagePromptsEnabled").default(false),
+  imageStyle: varchar("imageStyle", { length: 100 }).default("photorealistic"),
+  imageAspectRatio: varchar("imageAspectRatio", { length: 20 }).default("16:9"),
   // Humanization sliders (0-100)
   sliderFormality: int("sliderFormality").default(50),
   sliderOpinionated: int("sliderOpinionated").default(50),
@@ -163,6 +211,10 @@ export const repurposeSessions = mysqlTable("repurpose_sessions", {
   userId: int("userId").notNull(),
   workspaceId: int("workspaceId"),
   voiceProfileId: int("voiceProfileId"),
+  secondaryVoiceProfileId: int("secondaryVoiceProfileId"),
+  primaryVoiceWeight: int("primaryVoiceWeight").default(100),
+  secondaryVoiceWeight: int("secondaryVoiceWeight").default(0),
+  voiceConditioning: json("voiceConditioning").$type<Record<string, unknown>>(),
   title: varchar("title", { length: 500 }),
   sourceContent: text("sourceContent"),
   sourceFileName: varchar("sourceFileName", { length: 255 }),

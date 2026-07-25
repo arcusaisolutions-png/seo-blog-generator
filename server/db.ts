@@ -151,10 +151,13 @@ export async function createVoiceSourceFile(data: InsertVoiceSourceFile): Promis
   return created;
 }
 
-export async function getVoiceSourceFiles(voiceProfileId: number): Promise<VoiceSourceFile[]> {
+export async function getVoiceSourceFiles(voiceProfileId: number, userId: number): Promise<VoiceSourceFile[]> {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(voiceSourceFiles).where(eq(voiceSourceFiles.voiceProfileId, voiceProfileId));
+  return db.select().from(voiceSourceFiles).where(and(
+    eq(voiceSourceFiles.voiceProfileId, voiceProfileId),
+    eq(voiceSourceFiles.userId, userId)
+  ));
 }
 
 // ─── Blog Drafts ──────────────────────────────────────────────────────────────

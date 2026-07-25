@@ -32,6 +32,9 @@ export default function ImageStudio() {
   const utils = trpc.useUtils();
   const { data: images = [], isLoading } = trpc.image.list.useQuery();
   const generatePromptsMutation = trpc.image.generatePrompts.useMutation();
+  const generateImageMutation = trpc.image.generate.useMutation({
+    onSuccess: () => { utils.image.list.invalidate(); toast.success("Image generated and saved!"); },
+  });
   const saveMutation = trpc.image.save.useMutation({
     onSuccess: () => { utils.image.list.invalidate(); toast.success("Image saved!"); },
   });
@@ -66,6 +69,15 @@ export default function ImageStudio() {
     await saveMutation.mutateAsync({ prompt, altText, style, aspectRatio });
   };
 
+  const handleGenerateImage = async (prompt: string, altText?: string, variation = false) => {
+    if (!prompt.trim()) { toast.error("Enter an image prompt first"); return; }
+    try {
+      await generateImageMutation.mutateAsync({ prompt, altText, style, aspectRatio, variation });
+    } catch (error: any) {
+      toast.error(error.message ?? "Image generation failed");
+    }
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="mb-6">
@@ -73,7 +85,7 @@ export default function ImageStudio() {
           <Image className="w-6 h-6 text-primary" />
           Image Studio
         </h1>
-        <p className="text-muted-foreground mt-1">Generate AI image prompts for your blog posts</p>
+        <p className="text-muted-foreground mt-1">Generate, save, and regenerate AI images for your blog posts</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -119,8 +131,8 @@ export default function ImageStudio() {
                 <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
                   <div className="flex items-center justify-between mb-2">
                     <Badge variant="default" className="text-xs">Featured Image</Badge>
-                    <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => handleSavePrompt(suggestedPrompts.featured, suggestedPrompts.altText)}>
-                      <Zap className="w-3 h-3" />Save
+                    <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" disabled={generateImageMutation.isPending} onClick={() => handleGenerateImage(suggestedPrompts.featured, suggestedPrompts.altText)}>
+                      <Zap className="w-3 h-3" />Generate
                     </Button>
                   </div>
                   <p className="text-sm">{suggestedPrompts.featured}</p>
@@ -130,8 +142,8 @@ export default function ImageStudio() {
                   <div key={i} className="p-3 rounded-lg bg-muted/50 border border-border">
                     <div className="flex items-center justify-between mb-2">
                       <Badge variant="secondary" className="text-xs">Section {i + 1}</Badge>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => handleSavePrompt(prompt)}>
-                        <Zap className="w-3 h-3" />Save
+                      <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" disabled={generateImageMutation.isPending} onClick={() => handleGenerateImage(prompt)}>
+                        <Zap className="w-3 h-3" />Generate
                       </Button>
                     </div>
                     <p className="text-sm">{prompt}</p>
@@ -145,9 +157,14 @@ export default function ImageStudio() {
             <CardHeader><CardTitle className="text-base">Custom Prompt</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               <Textarea placeholder="Write your own image prompt..." value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} rows={4} />
-              <Button variant="outline" className="w-full gap-2" onClick={() => handleSavePrompt(customPrompt)} disabled={!customPrompt.trim()}>
-                <Zap className="w-4 h-4" />Save Prompt
-              </Button>
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="outline" className="gap-2" onClick={() => handleSavePrompt(customPrompt)} disabled={!customPrompt.trim() || saveMutation.isPending}>
+                  Save Prompt
+                </Button>
+                <Button className="gap-2" onClick={() => handleGenerateImage(customPrompt)} disabled={!customPrompt.trim() || generateImageMutation.isPending}>
+                  <Zap className="w-4 h-4" />Generate Image
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -168,6 +185,11 @@ export default function ImageStudio() {
                 <Card key={img.id}>
                   <CardContent className="py-3 px-4">
                     <div className="flex items-start justify-between gap-3">
+                      {img.imageUrl && (
+                        <a href={img.imageUrl} target="_blank" rel="noreferrer" className="shrink-0">
+                          <img src={img.imageUrl} alt={img.altText ?? "Generated image"} className="h-16 w-24 rounded object-cover border border-border" />
+                        </a>
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm truncate">{img.prompt}</p>
                         {img.altText && <p className="text-xs text-muted-foreground mt-0.5">Alt: {img.altText}</p>}
@@ -177,9 +199,26 @@ export default function ImageStudio() {
                           <span className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(img.createdAt), { addSuffix: true })}</span>
                         </div>
                       </div>
-                      <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive" onClick={() => deleteMutation.mutate({ id: img.id })}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="w-7 h-7"
+                          title={img.imageUrl ? "Generate variation" : "Generate image from saved prompt"}
+                          disabled={generateImageMutation.isPending}
+                          onClick={() => handleGenerateImage(img.prompt, img.altText ?? undefined, Boolean(img.imageUrl))}
+                        >
+                          {img.imageUrl ? <Wand2 className="w-3.5 h-3.5" /> : <Zap className="w-3.5 h-3.5" />}
+                        </Button>
+                        {img.imageUrl && (
+                          <Button asChild variant="ghost" size="icon" className="w-7 h-7" title="Open image">
+                            <a href={img.imageUrl} target="_blank" rel="noreferrer"><ExternalLink className="w-3.5 h-3.5" /></a>
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="w-7 h-7 text-destructive hover:text-destructive" onClick={() => deleteMutation.mutate({ id: img.id })}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

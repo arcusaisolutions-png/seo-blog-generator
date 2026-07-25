@@ -10,9 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { VoiceSampleIntake, type ExtractedSource } from "@/components/voice/VoiceSampleIntake";
 import {
-  Mic2, Plus, Search, Trash2, Copy, Wand2, Upload,
-  ChevronRight, BarChart2, CheckCircle2, X, Tag,
+  Mic2, Plus, Search, Trash2, Copy, Wand2,
+  ChevronRight, BarChart2, CheckCircle2, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -36,6 +37,7 @@ export default function VoiceStudio() {
     onError: () => toast.error("Failed to create voice"),
   });
   const analyzeMutation = trpc.voice.analyze.useMutation();
+  const extractFilesMutation = trpc.voice.extractFiles.useMutation();
   const saveAnalysisMutation = trpc.voice.saveAnalysis.useMutation({
     onSuccess: () => { utils.voice.list.invalidate(); setAnalyzeOpen(false); toast.success("Voice profile saved!"); },
   });
@@ -45,6 +47,10 @@ export default function VoiceStudio() {
   const duplicateMutation = trpc.voice.duplicate.useMutation({
     onSuccess: () => { utils.voice.list.invalidate(); toast.success("Voice duplicated"); },
   });
+  const updateMutation = trpc.voice.update.useMutation({
+    onSuccess: () => { utils.voice.list.invalidate(); toast.success("Voice profile updated"); },
+    onError: (error) => toast.error(error.message ?? "Failed to update voice"),
+  });
 
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -52,6 +58,10 @@ export default function VoiceStudio() {
   const [selectedVoice, setSelectedVoice] = useState<number | null>(null);
   const [compareVoice1, setCompareVoice1] = useState<string>("none");
   const [compareVoice2, setCompareVoice2] = useState<string>("none");
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editTags, setEditTags] = useState("");
 
   // Create form
   const [newName, setNewName] = useState("");
@@ -62,6 +72,8 @@ export default function VoiceStudio() {
   // Analyze form
   const [analyzeProfileId, setAnalyzeProfileId] = useState<string>("new");
   const [sampleText, setSampleText] = useState("");
+  const [sourceFiles, setSourceFiles] = useState<ExtractedSource[]>([]);
+  const [voiceName, setVoiceName] = useState("");
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -74,11 +86,13 @@ export default function VoiceStudio() {
   const voice2Data = voices.find((v) => v.id.toString() === compareVoice2);
 
   const handleAnalyze = async () => {
-    if (!sampleText.trim()) { toast.error("Please paste some writing samples"); return; }
+    const samples = [sampleText, ...sourceFiles.map((source) => source.extractedText)].filter((sample) => sample.trim());
+    if (!samples.length) { toast.error("Paste a sample or upload a writing file"); return; }
     setIsAnalyzing(true);
     try {
-      const result = await analyzeMutation.mutateAsync({ samples: [sampleText] });
+      const result = await analyzeMutation.mutateAsync({ samples });
       setAnalysisResult(result);
+      setVoiceName(result.voiceName);
       toast.success("Analysis complete!");
     } catch (err: any) {
       toast.error(err.message ?? "Analysis failed");
@@ -91,16 +105,45 @@ export default function VoiceStudio() {
     if (!analysisResult) return;
     let profileId: number;
     if (analyzeProfileId === "new") {
-      const profile = await createMutation.mutateAsync({ name: analysisResult.voiceName, voiceType: "personal" });
+      const profile = await createMutation.mutateAsync({ name: voiceName.trim() || analysisResult.voiceName, voiceType: "personal" });
       profileId = profile.id;
     } else {
       profileId = parseInt(analyzeProfileId);
     }
     await saveAnalysisMutation.mutateAsync({
       voiceProfileId: profileId,
+      name: voiceName.trim() || analysisResult.voiceName,
       analysis: analysisResult,
-      sourceSamples: [{ content: sampleText }],
+      sourceTextCombined: [sampleText, ...sourceFiles.map((source) => source.extractedText)].filter(Boolean).join("\n\n"),
+      sourceSamples: [
+        ...(sampleText.trim() ? [{ content: sampleText }] : []),
+        ...sourceFiles.map((source) => ({
+          content: source.extractedText,
+          originalFileName: source.originalFileName,
+          mimeType: source.mimeType,
+          fileSize: source.fileSize,
+        })),
+      ],
     });
+  };
+
+  const handleExtractSources = async (files: Array<{ fileName: string; mimeType: string; fileSize: number; dataBase64: string }>): Promise<ExtractedSource[]> => {
+    try {
+      const result = await extractFilesMutation.mutateAsync({ files });
+      toast.success(`${result.files.length} writing sample${result.files.length === 1 ? "" : "s"} extracted`);
+      return result.files;
+    } catch (error: any) {
+      toast.error(error.message ?? "Could not extract the selected file");
+      return [];
+    }
+  };
+
+  const openEditProfile = () => {
+    if (!selectedVoiceData) return;
+    setEditName(selectedVoiceData.name);
+    setEditDescription(selectedVoiceData.description ?? "");
+    setEditTags(((selectedVoiceData.tags as string[] | null) ?? []).join(", "));
+    setEditOpen(true);
   };
 
   return (
@@ -123,17 +166,16 @@ export default function VoiceStudio() {
                 <DialogTitle>Analyze Writing Sample</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Paste Writing Sample(s)</Label>
-                  <Textarea
-                    placeholder="Paste blog posts, emails, articles, or any writing that represents the voice you want to capture..."
-                    value={sampleText}
-                    onChange={(e) => setSampleText(e.target.value)}
-                    rows={8}
-                    className="font-mono text-sm"
-                  />
-                  <p className="text-xs text-muted-foreground">Word count: {sampleText.split(/\s+/).filter(Boolean).length} words (more = better analysis)</p>
-                </div>
+                <VoiceSampleIntake
+                  label="Writing samples"
+                  placeholder="Paste blog posts, emails, articles, or any writing that represents the voice you want to capture..."
+                  text={sampleText}
+                  onTextChange={setSampleText}
+                  sources={sourceFiles}
+                  onSourcesChange={setSourceFiles}
+                  onExtract={handleExtractSources}
+                  disabled={isAnalyzing || extractFilesMutation.isPending}
+                />
                 {!analysisResult ? (
                   <Button onClick={handleAnalyze} disabled={isAnalyzing} className="w-full gap-2">
                     {isAnalyzing ? <><div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />Analyzing...</> : <><Wand2 className="w-4 h-4" />Analyze Voice</>}
@@ -161,6 +203,10 @@ export default function VoiceStudio() {
                           </div>
                         ))}
                       </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Voice name</Label>
+                      <Input value={voiceName} onChange={(event) => setVoiceName(event.target.value)} />
                     </div>
                     <div className="space-y-2">
                       <Label>Save to Profile</Label>
@@ -226,6 +272,43 @@ export default function VoiceStudio() {
         </div>
       </div>
 
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Voice Profile</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input value={editName} onChange={(event) => setEditName(event.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea value={editDescription} onChange={(event) => setEditDescription(event.target.value)} rows={3} />
+            </div>
+            <div className="space-y-2">
+              <Label>Tags</Label>
+              <Input value={editTags} onChange={(event) => setEditTags(event.target.value)} placeholder="founder, conversational, B2B" />
+              <p className="text-xs text-muted-foreground">Separate tags with commas.</p>
+            </div>
+            <Button
+              className="w-full"
+              disabled={!selectedVoiceData || !editName.trim() || updateMutation.isPending}
+              onClick={async () => {
+                if (!selectedVoiceData) return;
+                await updateMutation.mutateAsync({
+                  id: selectedVoiceData.id,
+                  name: editName.trim(),
+                  description: editDescription.trim(),
+                  tags: editTags.split(",").map((tag) => tag.trim()).filter(Boolean),
+                });
+                setEditOpen(false);
+              }}
+            >
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Tabs defaultValue="profiles">
         <TabsList className="mb-6">
           <TabsTrigger value="profiles">Voice Profiles</TabsTrigger>
@@ -290,6 +373,7 @@ export default function VoiceStudio() {
                       <p className="text-muted-foreground text-sm mt-0.5">{selectedVoiceData.summaryDescription}</p>
                     </div>
                     <div className="flex gap-2">
+                      <Button variant="outline" size="sm" className="text-xs" onClick={openEditProfile}>Edit</Button>
                       <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => duplicateMutation.mutate({ id: selectedVoiceData.id })}>
                         <Copy className="w-3.5 h-3.5" />Duplicate
                       </Button>

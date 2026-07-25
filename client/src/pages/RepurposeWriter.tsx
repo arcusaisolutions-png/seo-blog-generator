@@ -7,6 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { VoiceBlendSelector } from "@/components/voice/VoiceBlendSelector";
+import { VoiceSampleIntake, type ExtractedSource } from "@/components/voice/VoiceSampleIntake";
 import { RefreshCcw, Zap, ChevronRight, Copy, Download, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -25,6 +27,7 @@ export default function RepurposeWriter() {
   const updateMutation = trpc.repurpose.update.useMutation();
   const generatePlanMutation = trpc.repurpose.generatePlan.useMutation();
   const generateContentMutation = trpc.repurpose.generateContent.useMutation();
+  const extractFilesMutation = trpc.voice.extractFiles.useMutation();
 
   const [activeSession, setActiveSession] = useState<number | null>(null);
   const [sourceContent, setSourceContent] = useState("");
@@ -32,12 +35,13 @@ export default function RepurposeWriter() {
   const [targetFormat, setTargetFormat] = useState("Blog Post");
   const [instructions, setInstructions] = useState("");
   const [voiceId, setVoiceId] = useState("none");
+  const [secondaryVoiceId, setSecondaryVoiceId] = useState("none");
+  const [primaryVoiceWeight, setPrimaryVoiceWeight] = useState(100);
+  const [sourceFiles, setSourceFiles] = useState<ExtractedSource[]>([]);
   const [isWorking, setIsWorking] = useState(false);
   const [plan, setPlan] = useState("");
   const [output, setOutput] = useState("");
   const [step, setStep] = useState<"input" | "plan" | "output">("input");
-
-  const activeSessionData = sessions.find((s) => s.id === activeSession);
 
   const handleNewSession = () => {
     setActiveSession(null);
@@ -46,13 +50,17 @@ export default function RepurposeWriter() {
     setTargetFormat("Blog Post");
     setInstructions("");
     setVoiceId("none");
+    setSecondaryVoiceId("none");
+    setPrimaryVoiceWeight(100);
+    setSourceFiles([]);
     setPlan("");
     setOutput("");
     setStep("input");
   };
 
   const handleGeneratePlan = async () => {
-    if (!sourceContent.trim()) { toast.error("Please paste source content"); return; }
+    const combinedSourceContent = [sourceContent, ...sourceFiles.map((source) => source.extractedText)].filter(Boolean).join("\n\n");
+    if (!combinedSourceContent.trim()) { toast.error("Paste source content or upload a source file"); return; }
     if (!targetTopic.trim()) { toast.error("Please enter a target topic"); return; }
     setIsWorking(true);
     try {
@@ -60,13 +68,21 @@ export default function RepurposeWriter() {
       if (!sessionId) {
         const session = await createMutation.mutateAsync({
           title: `Repurpose: ${targetTopic.slice(0, 50)}`,
-          sourceContent, targetTopic, targetFormat, transformationInstructions: instructions,
+          sourceContent: combinedSourceContent, sourceFileName: sourceFiles.map((source) => source.originalFileName).filter(Boolean).join(", ") || undefined,
+          targetTopic, targetFormat, transformationInstructions: instructions,
           voiceProfileId: voiceId !== "none" ? parseInt(voiceId) : undefined,
+          secondaryVoiceProfileId: secondaryVoiceId !== "none" ? parseInt(secondaryVoiceId) : undefined,
+          primaryVoiceWeight,
         });
         sessionId = session.id;
         setActiveSession(sessionId);
       } else {
-        await updateMutation.mutateAsync({ id: sessionId, sourceContent, targetTopic, targetFormat, transformationInstructions: instructions, voiceProfileId: voiceId !== "none" ? parseInt(voiceId) : null });
+        await updateMutation.mutateAsync({
+          id: sessionId, sourceContent: combinedSourceContent, targetTopic, targetFormat, transformationInstructions: instructions,
+          voiceProfileId: voiceId !== "none" ? parseInt(voiceId) : null,
+          secondaryVoiceProfileId: secondaryVoiceId !== "none" ? parseInt(secondaryVoiceId) : null,
+          primaryVoiceWeight,
+        });
       }
       toast.info("Analyzing source content...");
       const result = await generatePlanMutation.mutateAsync({ sessionId });
@@ -78,6 +94,17 @@ export default function RepurposeWriter() {
       toast.error(err.message ?? "Failed to generate plan");
     } finally {
       setIsWorking(false);
+    }
+  };
+
+  const handleExtractSources = async (files: Array<{ fileName: string; mimeType: string; fileSize: number; dataBase64: string }>): Promise<ExtractedSource[]> => {
+    try {
+      const result = await extractFilesMutation.mutateAsync({ files });
+      toast.success(`${result.files.length} source file${result.files.length === 1 ? "" : "s"} extracted`);
+      return result.files;
+    } catch (error: any) {
+      toast.error(error.message ?? "Could not extract the selected file");
+      return [];
     }
   };
 
@@ -121,7 +148,20 @@ export default function RepurposeWriter() {
             sessions.map((s) => (
               <button
                 key={s.id}
-                onClick={() => { setActiveSession(s.id); setOutput(s.outputContent ?? ""); setPlan(s.transformationPlan ?? ""); setStep(s.outputContent ? "output" : s.transformationPlan ? "plan" : "input"); }}
+                onClick={() => {
+                  setActiveSession(s.id);
+                  setSourceContent(s.sourceContent ?? "");
+                  setTargetTopic(s.targetTopic ?? "");
+                  setTargetFormat(s.targetFormat ?? "Blog Post");
+                  setInstructions(s.transformationInstructions ?? "");
+                  setVoiceId(s.voiceProfileId?.toString() ?? "none");
+                  setSecondaryVoiceId(s.secondaryVoiceProfileId?.toString() ?? "none");
+                  setPrimaryVoiceWeight(s.primaryVoiceWeight ?? 100);
+                  setSourceFiles([]);
+                  setOutput(s.outputContent ?? "");
+                  setPlan(s.transformationPlan ?? "");
+                  setStep(s.outputContent ? "output" : s.transformationPlan ? "plan" : "input");
+                }}
                 className={`w-full text-left p-2.5 rounded-lg border text-xs transition-colors ${activeSession === s.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
               >
                 <p className="font-medium truncate">{s.title ?? "Untitled"}</p>
@@ -150,14 +190,16 @@ export default function RepurposeWriter() {
               <Card>
                 <CardHeader><CardTitle className="text-base">Source Content</CardTitle></CardHeader>
                 <CardContent>
-                  <Textarea
-                    placeholder="Paste your source content here — transcripts, rough drafts, notes, articles, emails, or any text you want to transform..."
-                    value={sourceContent}
-                    onChange={(e) => setSourceContent(e.target.value)}
-                    rows={10}
-                    className="font-mono text-sm"
+                  <VoiceSampleIntake
+                    label="Paste or upload source material"
+                    placeholder="Paste transcripts, rough drafts, notes, articles, emails, or any text you want to transform..."
+                    text={sourceContent}
+                    onTextChange={setSourceContent}
+                    sources={sourceFiles}
+                    onSourcesChange={setSourceFiles}
+                    onExtract={handleExtractSources}
+                    disabled={isWorking || extractFilesMutation.isPending}
                   />
-                  <p className="text-xs text-muted-foreground mt-2">{sourceContent.split(/\s+/).filter(Boolean).length} words</p>
                 </CardContent>
               </Card>
               <Card>
@@ -176,16 +218,22 @@ export default function RepurposeWriter() {
                       </Select>
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Brand Voice</Label>
-                    <Select value={voiceId} onValueChange={setVoiceId}>
-                      <SelectTrigger><SelectValue placeholder="No voice selected" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No voice</SelectItem>
-                        {voices.map((v) => <SelectItem key={v.id} value={v.id.toString()}>{v.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <VoiceBlendSelector
+                    voices={voices}
+                    primaryVoiceId={voiceId}
+                    secondaryVoiceId={secondaryVoiceId}
+                    primaryWeight={primaryVoiceWeight}
+                    onPrimaryVoiceChange={(value) => {
+                      setVoiceId(value);
+                      if (value === "none") {
+                        setSecondaryVoiceId("none");
+                        setPrimaryVoiceWeight(100);
+                      }
+                    }}
+                    onSecondaryVoiceChange={setSecondaryVoiceId}
+                    onPrimaryWeightChange={setPrimaryVoiceWeight}
+                    primaryLabel="Primary brand voice"
+                  />
                   <div className="space-y-2">
                     <Label>Transformation Instructions</Label>
                     <Textarea
