@@ -1,0 +1,203 @@
+import {
+  createBlogDraft,
+  createTemplate,
+  createVoiceProfile,
+  getUserVoiceProfiles,
+  upsertUserSettings,
+} from "./db";
+
+export async function seedDemoDataForUser(userId: number): Promise<void> {
+  // Check if already seeded
+  const existing = await getUserVoiceProfiles(userId);
+  if (existing.length > 0) return;
+
+  // ─── Demo Voice Profiles ───────────────────────────────────────────────────
+  const voice1 = await createVoiceProfile({
+    userId,
+    name: "The Confident Strategist",
+    description: "Direct, authoritative, data-driven. Speaks to decision-makers.",
+    voiceType: "brand",
+    tags: ["B2B", "SaaS", "Leadership"],
+    summaryDescription: "A confident, data-driven voice that speaks directly to business decision-makers. Uses precise language, backs claims with evidence, and isn't afraid to challenge conventional thinking.",
+    dnaFormality: 70,
+    dnaOpinionated: 75,
+    dnaElaborate: 60,
+    dnaBold: 72,
+    dnaStorytelling: 45,
+    dnaHumor: 20,
+    dnaPersuasion: 80,
+    dnaTechnical: 65,
+    doRules: ["Use data and statistics to support claims", "Take clear positions on industry debates", "Address objections directly", "Use active voice", "Lead with the most important insight"],
+    dontRules: ["Avoid hedging language like 'might' or 'could possibly'", "Don't use jargon without explanation", "Avoid passive voice", "Don't bury the lead", "Avoid filler phrases"],
+    signaturePhrases: ["Here's what the data actually shows", "The conventional wisdom is wrong", "Let me be direct", "The bottom line is"],
+    preferredOpenings: ["Start with a counterintuitive statistic", "Open with a bold claim", "Lead with a provocative question"],
+    preferredTransitions: ["Here's why that matters", "But here's the thing", "The data tells a different story"],
+    preferredCtaStyles: ["Action-oriented with clear next step", "Value-focused CTA"],
+    vocabularyPreferences: ["leverage", "optimize", "strategic", "ROI", "scalable"],
+    forbiddenPhrases: ["game-changer", "synergy", "paradigm shift", "circle back"],
+    sampleExcerpts: ["Most companies approach content marketing backwards. They create content, then hope it ranks. The companies that consistently win organic traffic do the opposite — they start with search intent and work backwards to content."],
+    confidenceScore: 87,
+    analysisData: { tone: "Authoritative and direct", formality: "Professional but accessible", personalityTraits: ["Confident", "Analytical", "Direct"] },
+    isDemo: true,
+  });
+
+  const voice2 = await createVoiceProfile({
+    userId,
+    name: "The Warm Educator",
+    description: "Approachable, patient, story-driven. Teaches complex topics simply.",
+    voiceType: "personal",
+    tags: ["Education", "B2C", "Coaching"],
+    summaryDescription: "A warm, patient voice that makes complex topics feel accessible. Uses analogies, real-world examples, and a conversational tone that feels like learning from a trusted friend.",
+    dnaFormality: 35,
+    dnaOpinionated: 40,
+    dnaElaborate: 75,
+    dnaBold: 30,
+    dnaStorytelling: 85,
+    dnaHumor: 55,
+    dnaPersuasion: 50,
+    dnaTechnical: 30,
+    doRules: ["Use relatable analogies", "Acknowledge the reader's struggles", "Break complex ideas into simple steps", "Use 'you' and 'we' frequently", "Include personal anecdotes"],
+    dontRules: ["Don't use unexplained technical jargon", "Avoid condescending language", "Don't rush through difficult concepts", "Avoid corporate speak"],
+    signaturePhrases: ["Think of it this way", "Here's a simple way to understand this", "You've probably experienced this before", "The good news is"],
+    preferredOpenings: ["Start with a relatable struggle", "Open with a story", "Ask a question the reader is already asking"],
+    preferredTransitions: ["Now here's where it gets interesting", "So what does this mean for you?", "Let's break this down"],
+    preferredCtaStyles: ["Encouraging and supportive CTA", "Low-pressure next step"],
+    vocabularyPreferences: ["imagine", "picture this", "step by step", "simply put"],
+    forbiddenPhrases: ["leverage", "utilize", "in order to", "it should be noted"],
+    sampleExcerpts: ["Learning SEO doesn't have to feel like decoding ancient hieroglyphics. I remember when I first started — I was convinced you needed a computer science degree just to understand what Google wanted. Spoiler: you don't."],
+    confidenceScore: 91,
+    analysisData: { tone: "Warm and encouraging", formality: "Conversational", personalityTraits: ["Empathetic", "Patient", "Storyteller"] },
+    isDemo: true,
+  });
+
+  const voice3 = await createVoiceProfile({
+    userId,
+    name: "The Contrarian Expert",
+    description: "Challenges industry norms, provocative, high-authority.",
+    voiceType: "campaign",
+    tags: ["Thought Leadership", "Tech", "Startup"],
+    summaryDescription: "A provocative, high-authority voice that challenges industry assumptions. Combines deep expertise with a willingness to say what others won't, creating content that sparks debate and earns shares.",
+    dnaFormality: 55,
+    dnaOpinionated: 95,
+    dnaElaborate: 65,
+    dnaBold: 95,
+    dnaStorytelling: 60,
+    dnaHumor: 35,
+    dnaPersuasion: 85,
+    dnaTechnical: 70,
+    doRules: ["Challenge popular beliefs with evidence", "Name the specific thing most people get wrong", "Use specific numbers and examples", "Be willing to name names", "Defend your position under scrutiny"],
+    dontRules: ["Don't be contrarian without substance", "Avoid vague criticisms", "Don't punch down", "Avoid hedging your contrarian takes"],
+    signaturePhrases: ["Everyone says X. They're wrong.", "The uncomfortable truth is", "Stop doing this", "Nobody talks about this, but"],
+    preferredOpenings: ["Open with the thing everyone believes that's wrong", "Start with a provocative statement"],
+    preferredTransitions: ["Here's the evidence nobody wants to see", "This is where it gets uncomfortable"],
+    preferredCtaStyles: ["Bold, direct CTA", "Challenge-based CTA"],
+    vocabularyPreferences: ["frankly", "the reality is", "contrary to popular belief", "the evidence shows"],
+    forbiddenPhrases: ["best practices", "it depends", "there's no one-size-fits-all"],
+    sampleExcerpts: ["Your content strategy is failing because you're optimizing for the wrong metric. Everyone obsesses over traffic. Smart content teams obsess over revenue attribution. These are not the same thing, and confusing them is costing you."],
+    confidenceScore: 83,
+    analysisData: { tone: "Provocative and authoritative", formality: "Semi-formal", personalityTraits: ["Contrarian", "Expert", "Direct"] },
+    isDemo: true,
+  });
+
+  // ─── Demo Blog Drafts ──────────────────────────────────────────────────────
+  await createBlogDraft({
+    userId,
+    voiceProfileId: voice1.id,
+    title: "The Complete Guide to B2B Content Marketing in 2025",
+    status: "final",
+    topic: "B2B content marketing strategy, SEO, demand generation",
+    primaryKeyword: "B2B content marketing",
+    secondaryKeywords: ["content strategy", "demand generation", "B2B SEO", "content ROI"],
+    searchIntent: "Informational",
+    audience: "B2B marketers and content managers",
+    funnelStage: "Awareness (TOFU)",
+    tone: "Professional",
+    blogLength: "comprehensive",
+    blogLayout: "pillar",
+    includeIntro: true,
+    includeTldr: true,
+    includeKeyTakeaways: true,
+    includeFaq: true,
+    includeConclusion: true,
+    includeCtaSection: true,
+    wordCount: 3420,
+    contentBrief: "A comprehensive guide targeting B2B marketers who want to build a content marketing strategy that drives real pipeline, not just traffic.",
+    contentOutline: "# The Complete Guide to B2B Content Marketing in 2025\n\n## Introduction\n## What B2B Content Marketing Actually Is (And Isn't)\n## The B2B Content Marketing Funnel\n## Building Your Content Strategy\n## SEO for B2B Content\n## Distribution and Amplification\n## Measuring ROI\n## FAQ\n## Conclusion",
+    contentDraft: "# The Complete Guide to B2B Content Marketing in 2025\n\nMost B2B companies approach content marketing backwards. They create content first, then hope it generates leads. The companies consistently winning with content do the opposite — they start with buyer intent and work backwards.\n\n## What B2B Content Marketing Actually Is\n\nB2B content marketing is the strategic creation and distribution of valuable content designed to attract, educate, and convert business buyers. The key word is *strategic*. Without a clear connection to revenue, it's just publishing.\n\n## The Modern B2B Content Funnel\n\nThe traditional awareness-consideration-decision funnel still applies, but modern B2B buyers don't move linearly through it...",
+    contentFinal: "# The Complete Guide to B2B Content Marketing in 2025\n\nMost B2B companies approach content marketing backwards. They create content first, then hope it generates leads. The companies consistently winning with content do the opposite — they start with buyer intent and work backwards.\n\n## TL;DR\n- B2B content marketing requires a strategy tied to revenue, not just traffic\n- Start with buyer intent, then create content\n- Distribution matters as much as creation\n- Measure pipeline contribution, not just pageviews\n\n## What B2B Content Marketing Actually Is\n\nB2B content marketing is the strategic creation and distribution of valuable content designed to attract, educate, and convert business buyers. The key word is *strategic*. Without a clear connection to revenue, it's just publishing.\n\n## The Modern B2B Content Funnel\n\nThe traditional awareness-consideration-decision funnel still applies, but modern B2B buyers don't move linearly through it. Research shows that B2B buyers consume an average of 13 pieces of content before making a purchase decision.\n\n**Key Takeaways:**\n- Build content for each stage of the funnel\n- Prioritize bottom-funnel content first (it converts)\n- Use top-funnel content for brand awareness and SEO\n\n## FAQ\n\n**Q: How long does B2B content marketing take to show results?**\nA: Expect 6-12 months for SEO content to gain traction. Paid distribution can show results in weeks.\n\n**Q: What types of content work best for B2B?**\nA: Long-form guides, case studies, and data reports consistently outperform for B2B audiences.",
+    metaTitle: "B2B Content Marketing Guide 2025: Strategy, SEO & ROI",
+    metaDescription: "The complete guide to B2B content marketing in 2025. Learn how to build a strategy that drives pipeline, not just traffic. Includes SEO, distribution, and ROI measurement.",
+    slugSuggestion: "b2b-content-marketing-guide",
+    isDemo: true,
+  });
+
+  await createBlogDraft({
+    userId,
+    voiceProfileId: voice2.id,
+    title: "How to Write Blog Posts That Actually Rank on Google",
+    status: "draft",
+    topic: "SEO writing, keyword research, on-page optimization",
+    primaryKeyword: "how to write blog posts that rank",
+    secondaryKeywords: ["SEO writing tips", "blog post optimization", "keyword research for blogs"],
+    searchIntent: "Informational",
+    audience: "Beginner to intermediate bloggers and content creators",
+    funnelStage: "Awareness (TOFU)",
+    tone: "Friendly",
+    blogLength: "long",
+    blogLayout: "how-to",
+    includeIntro: true,
+    includeFaq: true,
+    includeConclusion: true,
+    includeCtaSection: true,
+    wordCount: 1850,
+    contentBrief: "A practical how-to guide for bloggers who want their content to rank on Google without needing to be an SEO expert.",
+    contentOutline: "# How to Write Blog Posts That Actually Rank on Google\n\n## Introduction\n## Step 1: Start With Keyword Research\n## Step 2: Understand Search Intent\n## Step 3: Structure Your Post for SEO\n## Step 4: Write for Humans First\n## Step 5: Optimize On-Page Elements\n## FAQ\n## Conclusion",
+    contentDraft: "# How to Write Blog Posts That Actually Rank on Google\n\nLet me be honest with you: most blog posts never get a single visitor from Google. Not because the writing is bad — but because they weren't built to rank.\n\nThe good news? Ranking on Google isn't magic. It's a process. And once you understand it, you can apply it to every post you write.\n\n## Step 1: Start With Keyword Research\n\nBefore you write a single word, you need to know what people are actually searching for. This is where most bloggers skip ahead and pay for it later...",
+    isDemo: true,
+  });
+
+  // ─── Demo Templates ────────────────────────────────────────────────────────
+  await createTemplate({
+    userId,
+    name: "SaaS Thought Leadership",
+    description: "Authority content for SaaS founders and product leaders",
+    category: "SaaS",
+    templateType: "thought_leadership",
+    voiceProfileId: voice1.id,
+    blogLayout: "thought-leadership",
+    config: { tone: "Authoritative", length: "long", includeKeyTakeaways: true, includeCtaSection: true },
+    isDemo: true,
+  });
+
+  await createTemplate({
+    userId,
+    name: "Local Service Business SEO",
+    description: "Optimized for local businesses targeting city + service keywords",
+    category: "Local SEO",
+    templateType: "local_seo",
+    blogLayout: "local-seo",
+    config: { includeSchemaFaq: true, useSemanticEntities: true, keywordDensityTarget: 2.0 },
+    isDemo: true,
+  });
+
+  await createTemplate({
+    userId,
+    name: "Beginner's How-To Guide",
+    description: "Step-by-step educational content for general audiences",
+    category: "Education",
+    templateType: "prompt_preset",
+    voiceProfileId: voice2.id,
+    blogLayout: "how-to",
+    config: { tone: "Friendly", readingLevel: "General Public", includeKeyTakeaways: true, includeFaq: true },
+    isDemo: true,
+  });
+
+  // ─── User Settings ─────────────────────────────────────────────────────────
+  await upsertUserSettings(userId, {
+    defaultVoiceProfileId: voice1.id,
+    defaultBlogLength: "medium",
+    defaultBlogLayout: "standard",
+    onboardingCompleted: false,
+    onboardingSteps: {},
+  });
+}

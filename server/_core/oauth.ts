@@ -2,6 +2,7 @@ import { COOKIE_NAME, ONE_YEAR_MS, OAUTH_STATE_COOKIE, decodeOAuthState } from "
 import { parse as parseCookieHeader } from "cookie";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
+import { seedDemoDataForUser } from "../seed";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 
@@ -47,6 +48,13 @@ export function registerOAuthRoutes(app: Express) {
         loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
         lastSignedIn: new Date(),
       });
+      // Seed demo data for new users (no-op if already seeded)
+      try {
+        const dbUser = await db.getUserByOpenId(userInfo.openId);
+        if (dbUser) await seedDemoDataForUser(dbUser.id);
+      } catch (e) {
+        console.warn("[Seed] Failed to seed demo data:", e);
+      }
 
       const sessionToken = await sdk.createSessionToken(userInfo.openId, {
         name: userInfo.name || "",
